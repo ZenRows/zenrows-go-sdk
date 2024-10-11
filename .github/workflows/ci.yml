@@ -1,0 +1,67 @@
+name: Quality control checks
+
+# This workflow is a collection of "quick checks" that should be reasonable
+# to run for any new commit to this repository in principle.
+#
+# The main purpose of this workflow is to represent checks that we want to
+# run prior to reviewing and merging a pull request. We should therefore aim
+# for these checks to complete in no more than a few minutes in the common
+# case.
+
+on:
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  consistency-checks:
+    name: "Code Consistency Checks"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { name: "api", path: "service/api" }
+    steps:
+      - name: "Fetch source code"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # We need to do comparisons against the main branch.
+
+      - name: "Install Go toolchain"
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "${{ matrix.path }}/go.mod"
+          cache-dependency-path: "${{ matrix.path }}/go.sum"
+
+      - name: "Go Modules consistency check"
+        working-directory: ${{ matrix.path }}
+        run: |
+          go mod tidy
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo >&2 "ERROR: go.mod/go.sum are not up-to-date. Run 'go mod tidy' and then commit the updated files."
+            exit 1
+          fi
+
+      - name: "Unit tests"
+        working-directory: ${{ matrix.path }}
+        run: |
+          go test -v -race -count 1 -covermode atomic -coverprofile=coverage.out ./...
+
+      - name: "Upload coverage"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-coverage
+          path: ${{ matrix.path }}/coverage.out
+
+      - name: "Lint"
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: ${{ matrix.path }}
+          version: v1.61.0
+          skip-cache: true
+          args: -v
