@@ -217,6 +217,10 @@ type RequestParameters struct {
 	// automatically for each request. If you provide custom headers, the scraping quality may be affected. Use this feature only if you
 	// know what you are doing.
 	CustomHeaders http.Header `json:"custom_headers,omitempty" structs:"-" schema:"-"`
+
+	// CustomParams is a map of custom parameters that will be passed to the ZenRows Scraper API. These parameters will be passed as query
+	// parameters in the request, and can be used to pass new features or options that are not available in the standard parameters.
+	CustomParams map[string]string `json:"custom_params,omitempty" structs:"-" schema:"-"`
 }
 
 func (p *RequestParameters) Validate() error { //nolint:gocyclo
@@ -314,6 +318,10 @@ func (p *RequestParameters) ToURLValues() url.Values {
 		} else {
 			values.Set(k, fmt.Sprintf("%v", v))
 		}
+	}
+
+	for k, v := range p.CustomParams {
+		values.Set(k, v)
 	}
 
 	// if custom headers are set, we need to set the custom_headers flag to true
