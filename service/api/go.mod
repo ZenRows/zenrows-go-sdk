@@ -9,4 +9,4 @@ require (
 	github.com/hashicorp/go-version v1.7.0
 )
 
-require golang.org/x/net v0.30.0 // indirect
+require golang.org/x/net v0.38.0 // indirect
