@@ -42,7 +42,7 @@ elements dynamically — all with the right features enabled.
 To install the SDK, run:
 
 ```bash
-go get github.com/zenrows/zenrows-go-sdk/services/api
+go get github.com/zenrows/zenrows-go-sdk/service/api
 ```
 
 ## Getting Started
