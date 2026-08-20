@@ -15,24 +15,24 @@ const (
 
 var retryableStatusCodes = []int{http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError}
 
-// Option configures the ZenRows Scraper API client.
+// Option configures the ZenRows Fetch API client.
 type Option interface {
 	apply(*options)
 }
 
-// options holds the configuration for the ZenRows Scraper API service
+// options holds the configuration for the ZenRows Fetch API service
 type options struct {
-	// baseURL is the base url of the ZenRows Scraper API service. Defaults to: "https://api.zenrows.com/v1"
+	// baseURL is the base url of the ZenRows Fetch API service. Defaults to: "https://api.zenrows.com/v1"
 	baseURL string
-	// apiKey is the secret token to use to authenticate with the ZenRows Scraper API client
+	// apiKey is the secret token to use to authenticate with the ZenRows Fetch API client
 	apiKey string
-	// retryOptions holds the configuration for the retry mechanism of the ZenRows Scraper API client
+	// retryOptions holds the configuration for the retry mechanism of the ZenRows Fetch API client
 	retryOptions retryOptions
-	// maxConcurrentRequests is the maximum number of concurrent requests that can be handled by the ZenRows Scraper API client at a time
+	// maxConcurrentRequests is the maximum number of concurrent requests that can be handled by the ZenRows Fetch API client at a time
 	maxConcurrentRequests int
 }
 
-// retryOptions holds the configuration for the retry mechanism of the ZenRows Scraper API client. Only response status codes in
+// retryOptions holds the configuration for the retry mechanism of the ZenRows Fetch API client. Only response status codes in
 // the retryableStatusCodes list will be retried.
 type retryOptions struct {
 	// maxRetryCount is the maximum number of retries to perform. If set to a non-zero value, the client will retry the request up to
@@ -46,7 +46,7 @@ type retryOptions struct {
 	retryMaxWaitTime time.Duration
 }
 
-// defaultOptions returns the default options for the ZenRows Scraper API client.
+// defaultOptions returns the default options for the ZenRows Fetch API client.
 func defaultOptions() options {
 	return options{
 		baseURL: defaultBaseURL,
@@ -74,14 +74,14 @@ func newFuncDialOption(f func(*options)) *funcOption {
 	}
 }
 
-// WithBaseURL returns an Option which configures the base URL of the ZenRows Scraper API client.
+// WithBaseURL returns an Option which configures the base URL of the ZenRows Fetch API client.
 func WithBaseURL(baseURL string) Option {
 	return newFuncDialOption(func(o *options) {
 		o.baseURL = baseURL
 	})
 }
 
-// WithAPIKey returns an Option which configures the API key of the ZenRows Scraper API client.
+// WithAPIKey returns an Option which configures the API key of the ZenRows Fetch API client.
 func WithAPIKey(apiKey string) Option {
 	return newFuncDialOption(func(o *options) {
 		o.apiKey = apiKey
@@ -109,7 +109,7 @@ func WithRetryMaxWaitTime(retryMaxWaitTime time.Duration) Option {
 	})
 }
 
-// WithMaxConcurrentRequests returns an Option which configures the maximum number of concurrent requests to the ZenRows Scraper API.
+// WithMaxConcurrentRequests returns an Option which configures the maximum number of concurrent requests to the ZenRows Fetch API.
 // See https://docs.zenrows.com/scraper-api/features/concurrency for more information.
 //
 // IMPORTANT: Breaking the concurrency limit will result in a 429 Too Many Requests error. If you exceed the limit repeatedly, your

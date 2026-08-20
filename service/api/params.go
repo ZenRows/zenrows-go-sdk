@@ -17,7 +17,7 @@ var decoder = schema.NewDecoder()
 // validHTTPMethods is a list of valid HTTP methods that can be used in a request.
 var validHTTPMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut}
 
-// ResponseType represents the type of response that the ZenRows Scraper API should return.
+// ResponseType represents the type of response that the ZenRows Fetch API should return.
 type ResponseType string
 
 const (
@@ -78,6 +78,22 @@ var AllScreenshotFormats = map[ScreenshotFormat]struct{}{
 	ScreenshotFormatJPEG: {},
 }
 
+// ExtractMode selects the contract used by Extract — ZenRows' AI-powered structured
+// extraction (beta). See https://docs.zenrows.com for what each mode returns.
+type ExtractMode string
+
+const (
+	ExtractModeAuto     ExtractMode = "auto"
+	ExtractModeNative   ExtractMode = "native"
+	ExtractModeStandard ExtractMode = "standard"
+)
+
+var AllExtractModes = map[ExtractMode]struct{}{
+	ExtractModeAuto:     {},
+	ExtractModeNative:   {},
+	ExtractModeStandard: {},
+}
+
 type ResourceType string
 
 const (
@@ -110,7 +126,7 @@ var AllResourceTypes = map[ResourceType]struct{}{
 	ResourceTypeXHR:         {},
 }
 
-// RequestParameters represents the parameters that can be passed to the ZenRows Scraper API when making a request to modify the behavior
+// RequestParameters represents the parameters that can be passed to the ZenRows Fetch API when making a request to modify the behavior
 // of the scraping engine.
 //
 // See https://docs.zenrows.com/scraper-api/api-reference for more information.
@@ -120,8 +136,19 @@ type RequestParameters struct {
 	ProxyCountry      string `json:"proxy_country,omitempty" structs:"proxy_country,omitempty" schema:"proxy_country"`
 
 	// Output modifiers
-	AutoParse    bool         `json:"autoparse,omitempty" structs:"autoparse,omitempty" schema:"autoparse"`
-	CSSExtractor string       `json:"css_extractor,omitempty" structs:"css_extractor,omitempty" schema:"css_extractor"`
+	AutoParse    bool   `json:"autoparse,omitempty" structs:"autoparse,omitempty" schema:"autoparse"`
+	CSSExtractor string `json:"css_extractor,omitempty" structs:"css_extractor,omitempty" schema:"css_extractor"`
+
+	// Extract runs the request through Extract, ZenRows' AI-powered structured extraction
+	// (beta), instead of returning raw HTML. See ExtractMode for the available
+	// contracts. Prefer Client.Extract, which sets this for you and defaults to ExtractModeAuto.
+	Extract ExtractMode `json:"extract,omitempty" structs:"extract,omitempty" schema:"extract"`
+
+	// DisableAutoparseFallback disables Client.Extract's default behavior of retrying once
+	// with AutoParse when ExtractModeAuto hits a domain not yet enabled for the Extract beta
+	// (a 402 with problem code AUTH010). Extract-only; not sent to the API.
+	DisableAutoparseFallback bool `json:"-" structs:"-" schema:"-"`
+
 	JSONResponse bool         `json:"json_response,omitempty" structs:"json_response,omitempty" schema:"json_response"`
 	ResponseType ResponseType `json:"response_type,omitempty" structs:"response_type,omitempty" schema:"response_type"`
 	Outputs      []OutputType `json:"outputs,omitempty" structs:"outputs,omitempty" schema:"outputs"`
@@ -177,7 +204,7 @@ type RequestParameters struct {
 	////////////////////////////////////////////////
 
 	// ReturnOriginalStatus will return the original status code of the response wthen the request is not successful. When a request is not
-	// successful, the ZenRows Scraper API will always return a 422 status code. If you enable this feature, the original status code will
+	// successful, the ZenRows Fetch API will always return a 422 status code. If you enable this feature, the original status code will
 	// be returned instead.
 	ReturnOriginalStatus bool `json:"original_status,omitempty" structs:"original_status,omitempty" schema:"original_status"`
 
@@ -197,7 +224,7 @@ type RequestParameters struct {
 	//
 	// See https://docs.zenrows.com/scraper-api/features/other#return-content-on-error for more information.
 	//
-	// IMPORTANT: ZenRows Scraper API only charges for successful requests. If you use this feature, you will also be charged for
+	// IMPORTANT: ZenRows Fetch API only charges for successful requests. If you use this feature, you will also be charged for
 	// unsuccessful requests matching the specified status codes.
 	AllowedStatusCodes []int `json:"allowed_status_codes,omitempty" structs:"allowed_status_codes,omitempty" schema:"allowed_status_codes"`
 
@@ -205,7 +232,7 @@ type RequestParameters struct {
 	//
 	// See https://docs.zenrows.com/scraper-api/features/js-rendering#block-resources for more information.
 	//
-	// IMPORTANT: ZenRows Scraper API already blocks some resources by default to improve the scraping quality. Use this feature only if you
+	// IMPORTANT: ZenRows Fetch API already blocks some resources by default to improve the scraping quality. Use this feature only if you
 	// know what you are doing.
 	BlockResources []ResourceType `json:"block_resources,omitempty" structs:"block_resources,omitempty" schema:"block_resources"`
 
@@ -213,12 +240,12 @@ type RequestParameters struct {
 	//
 	// See https://docs.zenrows.com/scraper-api/features/headers for more information.
 	//
-	// IMPORTANT: ZenRows Scraper API already rotates and selects the best combination of headers (like User-Agent, Accept-Language, etc.)
+	// IMPORTANT: ZenRows Fetch API already rotates and selects the best combination of headers (like User-Agent, Accept-Language, etc.)
 	// automatically for each request. If you provide custom headers, the scraping quality may be affected. Use this feature only if you
 	// know what you are doing.
 	CustomHeaders http.Header `json:"custom_headers,omitempty" structs:"-" schema:"-"`
 
-	// CustomParams is a map of custom parameters that will be passed to the ZenRows Scraper API. These parameters will be passed as query
+	// CustomParams is a map of custom parameters that will be passed to the ZenRows Fetch API. These parameters will be passed as query
 	// parameters in the request, and can be used to pass new features or options that are not available in the standard parameters.
 	CustomParams map[string]string `json:"custom_params,omitempty" structs:"-" schema:"-"`
 }
@@ -239,6 +266,12 @@ func (p *RequestParameters) Validate() error { //nolint:gocyclo
 	if p.ResponseType != "" {
 		if _, ok := AllResponseTypes[p.ResponseType]; !ok {
 			return InvalidParameterError{Msg: "invalid response type"}
+		}
+	}
+
+	if p.Extract != "" {
+		if _, ok := AllExtractModes[p.Extract]; !ok {
+			return InvalidParameterError{Msg: "invalid extract mode"}
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/zenrows/zenrows-go-sdk/service/api/version"
@@ -15,14 +16,14 @@ const (
 	urlParamName    = "url"
 )
 
-// Client is the ZenRows Scraper API client
+// Client is the ZenRows Fetch API client
 type Client struct {
 	cfg                  options
 	http                 *resty.Client
 	concurrencySemaphore chan struct{}
 }
 
-// NewClient creates and returns a new ZenRows Scraper API client
+// NewClient creates and returns a new ZenRows Fetch API client
 func NewClient(opts ...Option) *Client {
 	client := &Client{cfg: defaultOptions()}
 
@@ -55,7 +56,7 @@ func (c *Client) isConfigured() bool {
 	return c.cfg.baseURL != "" && c.cfg.apiKey != ""
 }
 
-// Scrape sends a request to the ZenRows Scraper API to scrape the given target URL using the specified method and parameters.
+// Scrape sends a request to the ZenRows Fetch API to scrape the given target URL using the specified method and parameters.
 func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *RequestParameters, body any) (*Response, error) {
 	// make sure the client is configured before sending the request
 	if !c.isConfigured() {
@@ -106,17 +107,67 @@ func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *R
 	return &Response{res: res}, nil
 }
 
-// Get sends an HTTP GET request to the ZenRows Scraper API to scrape the given target URL using the specified parameters.
+// Get sends an HTTP GET request to the ZenRows Fetch API to scrape the given target URL using the specified parameters.
 func (c *Client) Get(ctx context.Context, targetURL string, params *RequestParameters) (*Response, error) {
 	return c.Scrape(ctx, http.MethodGet, targetURL, params, nil)
 }
 
-// Post sends an HTTP POST request to the ZenRows Scraper API to scrape the given target URL using the specified parameters.
+// Fetch sends an HTTP GET request to scrape the given target URL — an alias for Get, named to
+// match ZenRows' Fetch product naming for the main page-scraping product, for parity with the
+// other ZenRows SDKs.
+func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestParameters) (*Response, error) {
+	return c.Get(ctx, targetURL, params)
+}
+
+// Extract fetches the given target URL and runs it through Extract — ZenRows' AI-powered
+// structured extraction (beta). If params.Extract is unset, it defaults to
+// ExtractModeAuto. This is a thin wrapper over Get with the Extract param set — no separate
+// endpoint or auth.
+//
+// ExtractModeAuto is a domain-gated open beta: when the target domain isn't enabled yet,
+// the API returns a 402 with problem code AUTH010. By default Extract catches that and
+// retries once with AutoParse set instead of returning the error response — set
+// params.DisableAutoparseFallback to get the raw AUTH010 response back instead.
+func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestParameters) (*Response, error) {
+	extractParams := RequestParameters{}
+	if params != nil {
+		extractParams = *params
+	}
+	if extractParams.Extract == "" {
+		extractParams.Extract = ExtractModeAuto
+	}
+
+	response, err := c.Get(ctx, targetURL, &extractParams)
+	if err != nil {
+		return response, err
+	}
+
+	if response.StatusCode() == http.StatusPaymentRequired &&
+		extractParams.Extract == ExtractModeAuto &&
+		!extractParams.DisableAutoparseFallback &&
+		isAuth010(response) {
+		autoparseParams := extractParams
+		autoparseParams.Extract = ""
+		autoparseParams.AutoParse = true
+		return c.Get(ctx, targetURL, &autoparseParams)
+	}
+
+	return response, nil
+}
+
+// isAuth010 reports whether a response's problem envelope carries the Extract
+// domain-not-enabled code (AUTH010).
+func isAuth010(response *Response) bool {
+	prob := response.Problem()
+	return prob != nil && strings.EqualFold(prob.Code, "AUTH010")
+}
+
+// Post sends an HTTP POST request to the ZenRows Fetch API to scrape the given target URL using the specified parameters.
 func (c *Client) Post(ctx context.Context, targetURL string, params *RequestParameters, body any) (*Response, error) {
 	return c.Scrape(ctx, http.MethodPost, targetURL, params, body)
 }
 
-// Put sends an HTTP PUT request to the ZenRows Scraper API to scrape the given target URL using the specified parameters.
+// Put sends an HTTP PUT request to the ZenRows Fetch API to scrape the given target URL using the specified parameters.
 func (c *Client) Put(ctx context.Context, targetURL string, params *RequestParameters, body any) (*Response, error) {
 	return c.Scrape(ctx, http.MethodPut, targetURL, params, body)
 }

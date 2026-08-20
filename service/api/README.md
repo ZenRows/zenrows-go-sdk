@@ -1,12 +1,12 @@
-# ZenRows Scraper API Go SDK
+# ZenRows Fetch API Go SDK
 
-This is the Go SDK for interacting with the ZenRows Scraper API, designed to help developers integrate web scraping
+This is the Go SDK for interacting with the ZenRows Fetch API, designed to help developers integrate web scraping
 capabilities into their Go applications. It simplifies the process of making HTTP requests, handling responses, 
-and managing configurations for interacting with the ZenRows Scraper API.
+and managing configurations for interacting with the ZenRows Fetch API.
 
 ## Introduction
 
-The ZenRows® Scraper API is a versatile tool designed to simplify and enhance the process of extracting data from 
+The ZenRows® Fetch API is a versatile tool designed to simplify and enhance the process of extracting data from 
 websites. Whether you’re dealing with static or dynamic content, our API provides a range of features to meet your 
 scraping needs efficiently.
 
@@ -28,6 +28,8 @@ elements dynamically — all with the right features enabled.
     - [GET Requests](#get-requests)
     - [POST/PUT Requests](#post-or-put-requests)
   - [Custom Request Parameters](#custom-request-parameters)
+  - [Extract](#extract)
+  - [Batch](#batch)
   - [Handling Responses](#handling-responses)
 - [Configuration Options](#configuration-options)
 - [Error Handling](#error-handling)
@@ -71,6 +73,8 @@ client := scraperapi.NewClient(
 ### Sending Requests
 
 #### GET Requests
+
+`client.Fetch()` is available as an alias for `client.Get()`, for parity with the other ZenRows SDKs — both call the same endpoint.
 
 ```go
 response, err := client.Get(context.Background(), "https://httpbin.io/anything", nil)
@@ -123,6 +127,24 @@ if err = response.Error(); err != nil {
 
 fmt.Println("Response Body:", response.String())
 ```
+
+### Extract
+
+[Extract](https://docs.zenrows.com) (beta) runs a page through ZenRows' AI-powered structured extraction instead of returning raw HTML. Use `client.Extract()` — it's the same request as `Get()`/`Fetch()`, with `params.Extract` set for you (defaults to `scraperapi.ExtractModeAuto` when left empty; other values are `ExtractModeNative` and `ExtractModeStandard`).
+
+```go
+response, err := client.Extract(context.Background(), "https://httpbin.io/anything", nil) // extract: "auto"
+// response, err := client.Extract(context.Background(), url, &scraperapi.RequestParameters{Extract: scraperapi.ExtractModeNative})
+if err != nil {
+    // handle error
+}
+
+fmt.Println("Response Body:", string(response.Body()))
+```
+
+### Batch
+
+For asynchronous, many-URL scraping jobs, see the separate [Batch API SDK](../batch/README.md) — it's a different service with its own base URL and lifecycle (open/closed jobs, runs, results), so it lives in its own Go module.
 
 ### Handling Responses
 

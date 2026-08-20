@@ -5,21 +5,21 @@ import (
 	"strings"
 )
 
-// NotConfiguredError results when the ZenRows Scraper API client is used without a valid API Key.
+// NotConfiguredError results when the ZenRows Fetch API client is used without a valid API Key.
 type NotConfiguredError struct{}
 
 func (NotConfiguredError) Error() string {
-	return "zenrows scraper api client is not configured"
+	return "zenrows fetch client is not configured"
 }
 
-// InvalidHTTPMethodError results when the ZenRows Scraper API client is used with an invalid HTTP method.
+// InvalidHTTPMethodError results when the ZenRows Fetch API client is used with an invalid HTTP method.
 type InvalidHTTPMethodError struct{}
 
 func (InvalidHTTPMethodError) Error() string {
 	return fmt.Sprintf("invalid http method. supported methods are: %s", strings.Join(validHTTPMethods, ", "))
 }
 
-// InvalidTargetURLError results when the ZenRows Scraper API client is used with an invalid target URL.
+// InvalidTargetURLError results when the ZenRows Fetch API client is used with an invalid target URL.
 type InvalidTargetURLError struct {
 	URL string
 	Msg string
@@ -42,7 +42,7 @@ func (e InvalidTargetURLError) Error() string {
 	return e.Msg
 }
 
-// InvalidParameterError results when the ZenRows Scraper API client is used with an invalid parameter.
+// InvalidParameterError results when the ZenRows Fetch API client is used with an invalid parameter.
 type InvalidParameterError struct {
 	Msg string
 }
