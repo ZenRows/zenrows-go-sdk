@@ -49,6 +49,69 @@ func TestExtractDefaultsToAutoMode(t *testing.T) {
 	}
 }
 
+func TestExtractSendsAdaptiveStealthByDefault(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
+
+	if _, err := client.Extract(context.Background(), "https://example.com", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(gotQuery, "mode=auto") {
+		t.Fatalf("expected query to contain mode=auto, got %q", gotQuery)
+	}
+}
+
+func TestExtractOmitsModeWhenAdaptiveStealthDisabled(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
+
+	params := &scraperapi.RequestParameters{DisableAdaptiveStealth: true}
+	if _, err := client.Extract(context.Background(), "https://example.com", params); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if contains(gotQuery, "mode=") {
+		t.Fatalf("expected query to omit mode, got %q", gotQuery)
+	}
+}
+
+func TestExtractFallbackRequestAlsoCarriesAdaptiveStealth(t *testing.T) {
+	var calls int
+	var secondQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = w.Write([]byte(`{"code":"AUTH010","status":402}`))
+			return
+		}
+		secondQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
+
+	if _, err := client.Extract(context.Background(), "https://example.com", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(secondQuery, "mode=auto") {
+		t.Fatalf("expected fallback request to also contain mode=auto, got %q", secondQuery)
+	}
+}
+
 func TestExtractRespectsExplicitMode(t *testing.T) {
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

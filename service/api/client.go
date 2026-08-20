@@ -128,6 +128,12 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 // the API returns a 402 with problem code AUTH010. By default Extract catches that and
 // retries once with AutoParse set instead of returning the error response — set
 // params.DisableAutoparseFallback to get the raw AUTH010 response back instead.
+//
+// Extract also sends Adaptive Stealth Mode (wire param "mode=auto") by default on both the
+// extract attempt and the AutoParse fallback, so a target needing JSRender/
+// UsePremiumProxies (e.g. a site with heavy anti-bot defenses) escalates automatically
+// instead of failing with REQS002. Set params.DisableAdaptiveStealth to disable that and
+// set JSRender/UsePremiumProxies yourself.
 func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestParameters) (*Response, error) {
 	extractParams := RequestParameters{}
 	if params != nil {
@@ -135,6 +141,9 @@ func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestP
 	}
 	if extractParams.Extract == "" {
 		extractParams.Extract = ExtractModeAuto
+	}
+	if !extractParams.DisableAdaptiveStealth {
+		extractParams.CustomParams = withCustomParam(extractParams.CustomParams, "mode", "auto")
 	}
 
 	response, err := c.Get(ctx, targetURL, &extractParams)
@@ -153,6 +162,17 @@ func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestP
 	}
 
 	return response, nil
+}
+
+// withCustomParam returns a copy of params with key=value added, without mutating the
+// caller's map.
+func withCustomParam(params map[string]string, key, value string) map[string]string {
+	merged := make(map[string]string, len(params)+1)
+	for k, v := range params {
+		merged[k] = v
+	}
+	merged[key] = value
+	return merged
 }
 
 // isAuth010 reports whether a response's problem envelope carries the Extract

@@ -149,6 +149,11 @@ type RequestParameters struct {
 	// (a 402 with problem code AUTH010). Extract-only; not sent to the API.
 	DisableAutoparseFallback bool `json:"-" structs:"-" schema:"-"`
 
+	// DisableAdaptiveStealth disables Client.Extract's default behavior of sending Adaptive
+	// Stealth Mode (wire param "mode=auto") so a target needing JSRender/UsePremiumProxies
+	// doesn't escalate automatically. Extract-only; not sent to the API itself.
+	DisableAdaptiveStealth bool `json:"-" structs:"-" schema:"-"`
+
 	JSONResponse bool         `json:"json_response,omitempty" structs:"json_response,omitempty" schema:"json_response"`
 	ResponseType ResponseType `json:"response_type,omitempty" structs:"response_type,omitempty" schema:"response_type"`
 	Outputs      []OutputType `json:"outputs,omitempty" structs:"outputs,omitempty" schema:"outputs"`
