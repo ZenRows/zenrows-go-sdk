@@ -3,6 +3,7 @@ package batch_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -300,7 +301,7 @@ func TestUploadCSVAllocatesSlotAndPUTsBody(t *testing.T) {
 	defer closeServer()
 
 	tmp := filepath.Join(t.TempDir(), "tasks.csv")
-	if err := os.WriteFile(tmp, []byte("url\nhttps://example.com\n"), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte("url\nhttps://example.com\n"), 0o600); err != nil {
 		t.Fatalf("failed to write fixture: %v", err)
 	}
 
@@ -373,7 +374,7 @@ func TestPaginationIteratorsFollowCursorUntilExhausted(t *testing.T) {
 	})
 	defer closeServer()
 
-	var ids []string
+	var ids []string //nolint:prealloc // length is unknown ahead of a paginated iterator
 	for job, err := range client.IterJobs(context.Background(), batch.ListJobsOptions{}) {
 		if err != nil {
 			t.Fatalf("unexpected error mid-iteration: %v", err)
@@ -437,10 +438,11 @@ func TestDownloadToDirEnforcesMaxBytesPerFile(t *testing.T) {
 
 	_, err := client.DownloadToDir(context.Background(), "job_123", t.TempDir(), batch.DownloadToDirOptions{MaxBytesPerFile: 1})
 	if err == nil {
-		t.Fatal("expected a DownloadLimitExceeded error")
+		t.Fatal("expected a DownloadLimitExceededError error")
 	}
-	if _, ok := err.(batch.DownloadLimitExceeded); !ok {
-		t.Fatalf("expected batch.DownloadLimitExceeded, got %T: %v", err, err)
+	var limitErr batch.DownloadLimitExceededError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("expected batch.DownloadLimitExceededError, got %T: %v", err, err)
 	}
 }
 

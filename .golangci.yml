@@ -80,6 +80,12 @@ linters-settings:
       - whyNoLint
       - rangeExprCopy
       - rangeValCopy
+    settings:
+      hugeParam:
+        # batch's TaskResult/Export/RunHandle are read-only response DTOs passed by
+        # value throughout the package's public API; switching to pointers is a wider
+        # API change than a lint cleanup, so the threshold is raised past their size.
+        sizeThreshold: 256
   gosec:
     excludes:
       - G601

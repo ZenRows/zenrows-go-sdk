@@ -98,6 +98,9 @@ func (c *Client) WaitForExport(ctx context.Context, jobID, runID, exportID strin
 	})
 }
 
+// defaultExportChunkSize is the copy buffer size used when no ChunkSize is configured.
+const defaultExportChunkSize = 1 << 20 // 1 MiB
+
 // DownloadAllResultsOptions configures Client.DownloadAllResults.
 type DownloadAllResultsOptions struct {
 	WaitTimeout  time.Duration // defaults to 600s
@@ -109,7 +112,7 @@ type DownloadAllResultsOptions struct {
 // to targetPath. Steps: (1) start the export, (2) poll until completed or failed, (3) on
 // completed, stream the presigned URL to targetPath.
 //
-// Returns a WaiterTimeout if the export doesn't reach a terminal state within WaitTimeout.
+// Returns a WaiterTimeoutError if the export doesn't reach a terminal state within WaitTimeout.
 // Returns an APIError with the server's error message on status=failed. The server-side
 // export is capped at 1 GiB per run — for larger runs (or one file per task), use
 // DownloadToDir instead: it fetches each body client-side with no size limit, at the cost of
@@ -117,7 +120,7 @@ type DownloadAllResultsOptions struct {
 func (c *Client) DownloadAllResults(ctx context.Context, jobID, runID, targetPath string, opts DownloadAllResultsOptions) (string, error) {
 	chunkSize := opts.ChunkSize
 	if chunkSize <= 0 {
-		chunkSize = 1 << 20
+		chunkSize = defaultExportChunkSize
 	}
 
 	export, err := c.StartResultsExport(ctx, jobID, runID)
@@ -141,11 +144,11 @@ func (c *Client) DownloadAllResults(ctx context.Context, jobID, runID, targetPat
 		return "", newAPIError(0, []byte("export completed but server returned no download_url"))
 	}
 
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(targetPath), dirPerm); err != nil {
 		return "", err
 	}
 	bare := &http.Client{}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, final.DownloadURL, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, final.DownloadURL, http.NoBody)
 	if err != nil {
 		return "", err
 	}
@@ -154,8 +157,11 @@ func (c *Client) DownloadAllResults(ctx context.Context, jobID, runID, targetPat
 		return "", err
 	}
 	defer res.Body.Close()
-	if res.StatusCode >= 400 {
-		body, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= http.StatusBadRequest {
+		body, readErr := io.ReadAll(res.Body)
+		if readErr != nil {
+			body = nil
+		}
 		return "", newAPIError(res.StatusCode, body)
 	}
 

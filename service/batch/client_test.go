@@ -3,6 +3,7 @@ package batch_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,7 +29,7 @@ func TestSubmitJobOpenAcceptsMoreTasksLater(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(batch.SubmitJobResponse{JobID: "job_123", Status: batch.JobStatusOpen})
+		_ = json.NewEncoder(w).Encode(batch.SubmitJobResponse{JobID: testJobID, Status: batch.JobStatusOpen})
 	})
 	defer closeServer()
 
@@ -36,7 +37,7 @@ func TestSubmitJobOpenAcceptsMoreTasksLater(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if job.JobID != "job_123" || job.Status != batch.JobStatusOpen {
+	if job.JobID != testJobID || job.Status != batch.JobStatusOpen {
 		t.Fatalf("unexpected job: %+v", job)
 	}
 	if gotAPIKey != "test-key" {
@@ -51,14 +52,14 @@ func TestAddTasksThenCloseJob(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/jobs/job_123/tasks":
 			_ = json.NewEncoder(w).Encode(batch.AddTasksResponse{AcceptedTasks: 1})
 		case r.Method == http.MethodPost && r.URL.Path == "/jobs/job_123/close":
-			_ = json.NewEncoder(w).Encode(batch.Job{JobID: "job_123", Status: batch.JobStatusClosed})
+			_ = json.NewEncoder(w).Encode(batch.Job{JobID: testJobID, Status: batch.JobStatusClosed})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
 	defer closeServer()
 
-	added, err := client.AddTasks(context.Background(), "job_123", []batch.Task{{URL: "https://example.com"}}, false)
+	added, err := client.AddTasks(context.Background(), testJobID, []batch.Task{{URL: "https://example.com"}}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestAddTasksThenCloseJob(t *testing.T) {
 		t.Fatalf("expected 1 accepted task, got %d", added.AcceptedTasks)
 	}
 
-	job, err := client.CloseJob(context.Background(), "job_123")
+	job, err := client.CloseJob(context.Background(), testJobID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestGetResultsDefaultsToLatestRun(t *testing.T) {
 	})
 	defer closeServer()
 
-	if _, err := client.GetResults(context.Background(), "job_123", batch.GetResultsOptions{}); err != nil {
+	if _, err := client.GetResults(context.Background(), testJobID, batch.GetResultsOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotPath != "/jobs/job_123/results" {
@@ -99,7 +100,7 @@ func TestGetResultsForSpecificRun(t *testing.T) {
 	})
 	defer closeServer()
 
-	_, err := client.GetResults(context.Background(), "job_123", batch.GetResultsOptions{RunID: "run_1"})
+	_, err := client.GetResults(context.Background(), testJobID, batch.GetResultsOptions{RunID: "run_1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -119,8 +120,8 @@ func TestAPIErrorSurfacesProblemDetail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	apiErr, ok := err.(batch.APIError)
-	if !ok {
+	var apiErr batch.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected batch.APIError, got %T", err)
 	}
 	if apiErr.StatusCode != http.StatusBadRequest {
@@ -133,8 +134,9 @@ func TestAPIErrorSurfacesProblemDetail(t *testing.T) {
 
 func TestNotConfiguredWithoutAPIKey(t *testing.T) {
 	client := batch.NewClient(batch.WithAPIKey(""))
-	_, err := client.GetJob(context.Background(), "job_123")
-	if _, ok := err.(batch.NotConfiguredError); !ok {
+	_, err := client.GetJob(context.Background(), testJobID)
+	var notConfigured batch.NotConfiguredError
+	if !errors.As(err, &notConfigured) {
 		t.Fatalf("expected NotConfiguredError, got %v", err)
 	}
 }

@@ -19,16 +19,19 @@ const (
 	DefaultMaxBytesPerFile       = 50 * 1024 * 1024 // 50 MiB
 	DefaultMaxCountInMemory      = 10_000
 	DefaultMaxTotalBytesInMemory = 500 * 1024 * 1024 // 500 MiB
+
+	dirPerm  = 0o755 // directories we create for downloaded results
+	filePerm = 0o600 // downloaded result files - owner read/write only
 )
 
-// DownloadLimitExceeded is returned when a download exceeds a configured cap.
-type DownloadLimitExceeded struct {
+// DownloadLimitExceededError is returned when a download exceeds a configured cap.
+type DownloadLimitExceededError struct {
 	LimitName string
 	Limit     int64
 	Observed  int64
 }
 
-func (e DownloadLimitExceeded) Error() string {
+func (e DownloadLimitExceededError) Error() string {
 	return fmt.Sprintf("download: %s cap exceeded (%d > %d)", e.LimitName, e.Observed, e.Limit)
 }
 
@@ -48,11 +51,11 @@ type DownloadedResult struct {
 // storage URL, so fetching it is one hop straight to the bucket (no API round-trip, no auth
 // header, and it keeps body bandwidth off the API).
 
-func fetchResultURL(ctx context.Context, task TaskResult) ([]byte, string, error) {
+func fetchResultURL(ctx context.Context, task TaskResult) (body []byte, contentType string, err error) {
 	if task.ResultURL == "" {
 		return nil, "", fmt.Errorf("task %q has no result_url — only successful tasks have a downloadable body", task.TaskID)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, task.ResultURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, task.ResultURL, http.NoBody)
 	if err != nil {
 		return nil, "", err
 	}
@@ -61,11 +64,11 @@ func fetchResultURL(ctx context.Context, task TaskResult) ([]byte, string, error
 		return nil, "", err
 	}
 	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
+	body, err = io.ReadAll(res.Body)
 	if err != nil {
 		return nil, "", err
 	}
-	if res.StatusCode >= 400 {
+	if res.StatusCode >= http.StatusBadRequest {
 		return nil, "", newAPIError(res.StatusCode, body)
 	}
 	return body, res.Header.Get("Content-Type"), nil
@@ -78,10 +81,10 @@ func downloadTaskToFile(task TaskResult, targetPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(targetPath), dirPerm); err != nil {
 		return err
 	}
-	return os.WriteFile(targetPath, body, 0o644)
+	return os.WriteFile(targetPath, body, filePerm)
 }
 
 // downloadTaskToMemory downloads one task's body straight from its result_url and returns
@@ -102,10 +105,10 @@ func downloadExportToPath(ctx context.Context, export Export, targetPath string,
 	if export.DownloadURL == "" {
 		return "", newAPIError(0, []byte("export completed but server returned no download_url"))
 	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(targetPath), dirPerm); err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, export.DownloadURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, export.DownloadURL, http.NoBody)
 	if err != nil {
 		return "", err
 	}
@@ -114,8 +117,11 @@ func downloadExportToPath(ctx context.Context, export Export, targetPath string,
 		return "", err
 	}
 	defer res.Body.Close()
-	if res.StatusCode >= 400 {
-		body, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= http.StatusBadRequest {
+		body, readErr := io.ReadAll(res.Body)
+		if readErr != nil {
+			body = nil
+		}
 		return "", newAPIError(res.StatusCode, body)
 	}
 	f, err := os.Create(targetPath)
@@ -221,7 +227,7 @@ func (c *Client) DownloadToDir(ctx context.Context, jobID, targetDir string, opt
 		}
 	}
 
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+	if err := os.MkdirAll(targetDir, dirPerm); err != nil {
 		return 0, err
 	}
 	allocator := newNameAllocator()
@@ -232,14 +238,14 @@ func (c *Client) DownloadToDir(ctx context.Context, jobID, targetDir string, opt
 			return err
 		}
 		if len(body) > maxBytesPerFile {
-			return DownloadLimitExceeded{LimitName: "max_bytes_per_file", Limit: int64(maxBytesPerFile), Observed: int64(len(body))}
+			return DownloadLimitExceededError{LimitName: "max_bytes_per_file", Limit: int64(maxBytesPerFile), Observed: int64(len(body))}
 		}
 		chosen := allocator.claim(nameFn(row))
 		path := filepath.Join(targetDir, chosen)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
 			return err
 		}
-		return os.WriteFile(path, body, 0o644)
+		return os.WriteFile(path, body, filePerm)
 	}
 
 	return runBulk(ctx, c, jobID, opts.RunID, status, handle, opts.Concurrency, maxFiles, "max_files")
@@ -259,7 +265,7 @@ type DownloadToMemoryOptions struct {
 }
 
 // DownloadToMemory loads every (matching) task body into a slice and returns it. Three
-// independent caps that all return DownloadLimitExceeded: MaxCount (row count), MaxTotalBytes
+// independent caps that all return DownloadLimitExceededError: MaxCount (row count), MaxTotalBytes
 // (running sum of body sizes), MaxBytesPerFile (any single oversize body aborts). Returned
 // slice ordering is NOT guaranteed when Concurrency > 1.
 func (c *Client) DownloadToMemory(ctx context.Context, jobID string, opts DownloadToMemoryOptions) ([]DownloadedResult, error) {
@@ -290,11 +296,11 @@ func (c *Client) DownloadToMemory(ctx context.Context, jobID string, opts Downlo
 			return err
 		}
 		if len(body) > maxBytesPerFile {
-			return DownloadLimitExceeded{LimitName: "max_bytes_per_file", Limit: int64(maxBytesPerFile), Observed: int64(len(body))}
+			return DownloadLimitExceededError{LimitName: "max_bytes_per_file", Limit: int64(maxBytesPerFile), Observed: int64(len(body))}
 		}
 		newTotal := atomic.AddInt64(&totalBytes, int64(len(body)))
 		if newTotal > maxTotalBytes {
-			return DownloadLimitExceeded{LimitName: "max_total_bytes", Limit: maxTotalBytes, Observed: newTotal}
+			return DownloadLimitExceededError{LimitName: "max_total_bytes", Limit: maxTotalBytes, Observed: newTotal}
 		}
 		mu.Lock()
 		out = append(out, DownloadedResult{TaskID: row.TaskID, ExternalID: row.ExternalID, ContentType: contentType, Body: body})
@@ -312,7 +318,10 @@ func (c *Client) DownloadToMemory(ctx context.Context, jobID string, opts Downlo
 
 // runBulk iterates results + applies handle to each, with optional parallelism via a
 // semaphore-limited goroutine pool. Returns the number of rows processed.
-func runBulk(ctx context.Context, c *Client, jobID, runID, status string, handle func(TaskResult) error, concurrency, maxRows int, maxRowsLimitName string) (int, error) {
+func runBulk(
+	ctx context.Context, c *Client, jobID, runID, status string,
+	handle func(TaskResult) error, concurrency, maxRows int, maxRowsLimitName string,
+) (int, error) {
 	if concurrency <= 0 {
 		concurrency = 1
 	}
@@ -326,7 +335,7 @@ func runBulk(ctx context.Context, c *Client, jobID, runID, status string, handle
 				return written, err
 			}
 			if written >= maxRows {
-				return written, DownloadLimitExceeded{LimitName: maxRowsLimitName, Limit: int64(maxRows), Observed: int64(written + 1)}
+				return written, DownloadLimitExceededError{LimitName: maxRowsLimitName, Limit: int64(maxRows), Observed: int64(written + 1)}
 			}
 			if err := handle(row); err != nil {
 				return written, err
@@ -354,7 +363,7 @@ func runBulk(ctx context.Context, c *Client, jobID, runID, status string, handle
 		mu.Lock()
 		if written >= maxRows {
 			if firstErr == nil {
-				firstErr = DownloadLimitExceeded{LimitName: maxRowsLimitName, Limit: int64(maxRows), Observed: int64(written + 1)}
+				firstErr = DownloadLimitExceededError{LimitName: maxRowsLimitName, Limit: int64(maxRows), Observed: int64(written + 1)}
 			}
 			mu.Unlock()
 			break

@@ -91,8 +91,11 @@ func (c *Client) UploadCSV(ctx context.Context, source any, opts UploadCSVOption
 		return "", err
 	}
 	defer res.Body.Close()
-	if res.StatusCode >= 400 {
-		body, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= http.StatusBadRequest {
+		body, readErr := io.ReadAll(res.Body)
+		if readErr != nil {
+			body = nil
+		}
 		return "", newAPIError(res.StatusCode, body)
 	}
 	return created.FileInputID, nil

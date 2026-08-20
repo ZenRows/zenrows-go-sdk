@@ -100,7 +100,7 @@ func isAutoMode(params map[string]any) bool {
 	return strings.ToLower(strings.TrimSpace(s)) == "auto"
 }
 
-func costForParams(params map[string]any) (Tier, int, int) {
+func costForParams(params map[string]any) (tier Tier, unitMin, unitMax int) {
 	if isAutoMode(params) {
 		return TierAuto, AutoMinCredits, AutoMaxCredits
 	}
@@ -144,13 +144,13 @@ func EstimateCost(tasks []Task, zenrowsParams map[string]any) CostEstimate {
 		for k, v := range taskParams(task) {
 			merged[k] = v
 		}
-		tier, min, max := costForParams(merged)
-		totalMin += min
-		totalMax += max
+		tier, unitMin, unitMax := costForParams(merged)
+		totalMin += unitMin
+		totalMax += unitMax
 		if line, ok := agg[tier]; ok {
 			line.Count++
 		} else {
-			agg[tier] = &CostLine{Tier: tier, Count: 1, UnitMin: min, UnitMax: max}
+			agg[tier] = &CostLine{Tier: tier, Count: 1, UnitMin: unitMin, UnitMax: unitMax}
 		}
 	}
 

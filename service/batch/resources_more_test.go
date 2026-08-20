@@ -3,6 +3,7 @@ package batch_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -84,7 +85,7 @@ func TestJobRefRunsIteratesAsRunHandles(t *testing.T) {
 	})
 	defer closeServer()
 
-	var got []string
+	var got []string //nolint:prealloc // length is unknown ahead of a paginated iterator
 	for run, err := range client.Job("job_123").Runs(context.Background(), batch.ListRunsOptions{}) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -230,8 +231,8 @@ func TestAPIErrorCodeDefaultsToInternalOnNonJSONBody(t *testing.T) {
 	defer closeServer()
 
 	_, err := client.GetJob(context.Background(), "job_123")
-	apiErr, ok := err.(batch.APIError)
-	if !ok {
+	var apiErr batch.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected batch.APIError, got %T", err)
 	}
 	if apiErr.Code() != "internal" {
@@ -248,7 +249,10 @@ func TestAPIErrorCodeSurfacesTheProblemCode(t *testing.T) {
 	defer closeServer()
 
 	_, err := client.GetJob(context.Background(), "job_123")
-	apiErr := err.(batch.APIError)
+	var apiErr batch.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected batch.APIError, got %T", err)
+	}
 	if apiErr.Code() != "idempotency_key_conflict" {
 		t.Fatalf("expected the real problem code, got %q", apiErr.Code())
 	}

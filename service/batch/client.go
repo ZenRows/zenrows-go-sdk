@@ -22,7 +22,7 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-const apiKeyHeader = "X-API-Key"
+const apiKeyHeader = "X-API-Key" //nolint:gosec // header name, not a credential value
 
 // Client is the Zenrows Batch API client.
 type Client struct {

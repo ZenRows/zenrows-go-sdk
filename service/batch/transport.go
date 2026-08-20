@@ -41,11 +41,11 @@ func hasIdempotencyKey(req *resty.Request) bool {
 }
 
 func backoffDuration(attempt int) time.Duration {
-	base := float64(backoffBaseMs) * float64(int64(1)<<uint(attempt))
+	base := float64(backoffBaseMs) * float64(int64(1)<<attempt)
 	if base > backoffCapMs {
 		base = backoffCapMs
 	}
-	jittered := base * (1 + (rand.Float64()*2-1)*backoffJitter)
+	jittered := base * (1 + (rand.Float64()*2-1)*backoffJitter) //nolint:gosec // timing jitter, not security-sensitive
 	return time.Duration(jittered) * time.Millisecond
 }
 
