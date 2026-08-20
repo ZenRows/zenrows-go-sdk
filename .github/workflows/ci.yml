@@ -26,6 +26,7 @@ jobs:
       matrix:
         include:
           - { name: "api", path: "service/api" }
+          - { name: "batch", path: "service/batch" }
     steps:
       - name: "Fetch source code"
         uses: actions/checkout@v4
