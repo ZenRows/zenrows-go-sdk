@@ -86,7 +86,7 @@ func (c *Client) UploadCSV(ctx context.Context, source any, opts UploadCSVOption
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 
-	res, err := bare.Do(httpReq)
+	res, err := bare.Do(httpReq) //nolint:gosec // fetching a presigned URL returned by our own trusted API, not caller-controlled
 	if err != nil {
 		return "", err
 	}

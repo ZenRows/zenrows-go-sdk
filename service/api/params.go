@@ -408,15 +408,17 @@ func ParseQueryRequestParameters(query url.Values) (*RequestParameters, error) {
 
 func init() {
 	decoder.RegisterConverter([]ResourceType{}, func(input string) reflect.Value {
-		var resourceTypes []ResourceType
-		for _, resourceType := range strings.Split(input, ",") {
+		parts := strings.Split(input, ",")
+		resourceTypes := make([]ResourceType, 0, len(parts))
+		for _, resourceType := range parts {
 			resourceTypes = append(resourceTypes, ResourceType(resourceType))
 		}
 		return reflect.ValueOf(resourceTypes)
 	})
 	decoder.RegisterConverter([]OutputType{}, func(input string) reflect.Value {
-		var outputTypes []OutputType
-		for _, outputType := range strings.Split(input, ",") {
+		parts := strings.Split(input, ",")
+		outputTypes := make([]OutputType, 0, len(parts))
+		for _, outputType := range parts {
 			outputTypes = append(outputTypes, OutputType(outputType))
 		}
 		return reflect.ValueOf(outputTypes)

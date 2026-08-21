@@ -59,7 +59,7 @@ func fetchResultURL(ctx context.Context, task TaskResult) (body []byte, contentT
 	if err != nil {
 		return nil, "", err
 	}
-	res, err := (&http.Client{}).Do(req)
+	res, err := (&http.Client{}).Do(req) //nolint:gosec // fetching a presigned URL returned by our own trusted API, not caller-controlled
 	if err != nil {
 		return nil, "", err
 	}
@@ -112,7 +112,7 @@ func downloadExportToPath(ctx context.Context, export Export, targetPath string,
 	if err != nil {
 		return "", err
 	}
-	res, err := (&http.Client{}).Do(req)
+	res, err := (&http.Client{}).Do(req) //nolint:gosec // fetching a presigned URL returned by our own trusted API, not caller-controlled
 	if err != nil {
 		return "", err
 	}
