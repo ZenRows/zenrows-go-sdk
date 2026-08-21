@@ -146,6 +146,15 @@ fmt.Println("Response Body:", string(response.Body()))
 
 For asynchronous, many-URL scraping jobs, see the separate [Batch API SDK](../batch/README.md) — it's a different service with its own base URL and lifecycle (open/closed jobs, runs, results), so it lives in its own Go module.
 
+### Adaptive Stealth Mode
+
+Set `Mode: scraperapi.ModeAuto` to let Zenrows pick the request configuration for you — it starts with the cheapest viable setup and escalates to `JSRender`/`UsePremiumProxies` only when the target needs it, billing only for the configuration that succeeds.
+
+```go
+params := &scraperapi.RequestParameters{Mode: scraperapi.ModeAuto}
+response, err := client.Get(context.Background(), "https://httpbin.io/anything", params)
+```
+
 ### Handling Responses
 
 The `Response` object provides several methods to access details about the HTTP response:

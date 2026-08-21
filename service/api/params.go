@@ -17,6 +17,20 @@ var decoder = schema.NewDecoder()
 // validHTTPMethods is a list of valid HTTP methods that can be used in a request.
 var validHTTPMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut}
 
+// Mode selects Adaptive Stealth Mode -- Zenrows starts with the cheapest viable request
+// configuration and escalates to JSRender/UsePremiumProxies only when the target needs
+// it, billing only for the configuration that succeeds. See
+// https://docs.zenrows.com/fetch/api-reference for more information.
+type Mode string
+
+const (
+	ModeAuto Mode = "auto"
+)
+
+var AllModes = map[Mode]struct{}{
+	ModeAuto: {},
+}
+
 // ResponseType represents the type of response that the ZenRows Fetch API should return.
 type ResponseType string
 
@@ -134,6 +148,11 @@ type RequestParameters struct {
 	// Proxy settings
 	UsePremiumProxies bool   `json:"premium_proxy,omitempty" structs:"premium_proxy,omitempty" schema:"premium_proxy"`
 	ProxyCountry      string `json:"proxy_country,omitempty" structs:"proxy_country,omitempty" schema:"proxy_country"`
+
+	// Mode selects Adaptive Stealth Mode when set to ModeAuto. When set, Zenrows manages
+	// JSRender/UsePremiumProxies itself -- don't also force them on client-side, an
+	// explicit false would look like an opt-out of escalation.
+	Mode Mode `json:"mode,omitempty" structs:"mode,omitempty" schema:"mode"`
 
 	// Output modifiers
 	AutoParse    bool   `json:"autoparse,omitempty" structs:"autoparse,omitempty" schema:"autoparse"`
@@ -266,6 +285,12 @@ func (p *RequestParameters) Validate() error { //nolint:gocyclo
 
 	if p.WaitMilliseconds < 0 || p.WaitMilliseconds > 30_000 {
 		return InvalidParameterError{Msg: "wait must be between 0 and 30000 (ms)"}
+	}
+
+	if p.Mode != "" {
+		if _, ok := AllModes[p.Mode]; !ok {
+			return InvalidParameterError{Msg: "invalid mode"}
+		}
 	}
 
 	if p.ResponseType != "" {
