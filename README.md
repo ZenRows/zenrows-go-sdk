@@ -25,35 +25,46 @@ its respective subdirectory and includes comprehensive documentation, installati
 
 - [Overview](#overview)
 - [SDKs](#sdks)
-    - [Scraper API Service](#scraper-api-service)
+    - [Fetch Service](#fetch-service)
+    - [Batch API Service](#batch-api-service)
 - [Other Languages](#other-languages)
 - [Contributing](#contributing)
 - [License](#license)
 
 ## SDKs
 
-### Scraper API Service
+### Fetch Service
 
-> ZenRows®’ Scraper API enables fast, efficient, and hassle-free data extraction from web pages by providing versatile
+> ZenRows®’ Fetch API enables fast, efficient, and hassle-free data extraction from web pages by providing versatile
 scraping modes. Whether you’re new to scraping or already experienced, ZenRows adapts to your needs, making it easy to
 collect data from the web while overcoming the common challenges posed by modern websites, including CAPTCHAs
 and anti-bot mechanisms.
 
 **Directory**: [`service/api`](./service/api)
 
-The `service/api` SDK is a Go client for the ZenRows Scraper API, allowing developers to send HTTP requests to scrape 
+The `service/api` SDK is a Go client for the ZenRows Fetch API, allowing developers to send HTTP requests to scrape 
 websites with support for various configurations like JavaScript rendering, custom headers, retries, and more.
 
 - [Installation and Usage](./service/api/README.md)
 - [API Reference](https://docs.zenrows.com/scraper-api/api-reference)
-                           
+
+### Batch API Service
+
+> The Batch API (beta) runs many URLs asynchronously as a job — submit once, and it tracks progress
+and serves results back to you. A job can stay **open** to accept tasks over time, or run as a
+one-shot batch with every task known upfront.
+
+**Directory**: [`service/batch`](./service/batch)
+
+- [Installation and Usage](./service/batch/README.md)
+
 ## Other Languages
 
 - **Node.js**:
-  - [Scraper API](https://github.com/ZenRows/zenrows-node-sdk)
+  - [Fetch](https://github.com/ZenRows/zenrows-node-sdk)
   - [Scraping Browser](https://github.com/ZenRows/browser-js-sdk)
 - **Python**:
-  - [Scraper API]( https://github.com/ZenRows/zenrows-python-sdk)
+  - [Fetch](https://github.com/ZenRows/zenrows-python-sdk)
 
 ## Contributing
 

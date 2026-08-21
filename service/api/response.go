@@ -97,7 +97,7 @@ func (r *Response) IsError() bool {
 	return r.res.IsError()
 }
 
-// TargetHeaders method to returns all the response headers that the target page has set, if any. ZenRows Scraper API encodes these headers
+// TargetHeaders method to returns all the response headers that the target page has set, if any. ZenRows Fetch API encodes these headers
 // with a "Z-" prefix, so this method filters out all headers that do not have this prefix.
 //
 // To get all the headers, see the [Response.Headers] field.
