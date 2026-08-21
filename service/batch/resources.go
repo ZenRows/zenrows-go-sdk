@@ -320,7 +320,7 @@ func (r ExportRef) DownloadToPath(ctx context.Context, targetPath string) (strin
 	if err != nil {
 		return "", err
 	}
-	return downloadExportToPath(ctx, loaded.Data, targetPath, 1<<20)
+	return downloadExportToPath(ctx, loaded.Data, targetPath, defaultExportChunkSize)
 }
 
 // ExportHandle is an ExportRef plus a guaranteed, synchronous Data snapshot.

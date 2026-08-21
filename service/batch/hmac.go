@@ -1,7 +1,9 @@
 package batch
 
-import "net/http"
-import "context"
+import (
+	"context"
+	"net/http"
+)
 
 // ListHMACKeys lists the org's current HMAC key slots (active/candidate metadata — never the
 // secret; that's only returned by RotateHMACKey).

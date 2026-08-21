@@ -3,12 +3,18 @@ package batch_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
 	"github.com/zenrows/zenrows-go-sdk/service/batch"
+)
+
+const (
+	testJobID      = "job_123"
+	testJobRunPath = "/jobs/job_123/runs/run_1"
 )
 
 func parseQuery(raw string) (url.Values, error) {
@@ -25,25 +31,26 @@ func TestAllMethodsRejectWhenNotConfigured(t *testing.T) {
 	cases := map[string]func() error{
 		"SubmitJob":  func() error { _, err := client.SubmitJob(ctx, batch.SubmitJobRequest{}); return err },
 		"ListJobs":   func() error { _, err := client.ListJobs(ctx, batch.ListJobsOptions{}); return err },
-		"GetJob":     func() error { _, err := client.GetJob(ctx, "job_123"); return err },
-		"DeleteJob":  func() error { return client.DeleteJob(ctx, "job_123") },
-		"AddTasks":   func() error { _, err := client.AddTasks(ctx, "job_123", nil, false); return err },
-		"CloseJob":   func() error { _, err := client.CloseJob(ctx, "job_123"); return err },
-		"StopRun":    func() error { _, err := client.StopRun(ctx, "job_123"); return err },
-		"Rerun":      func() error { _, err := client.Rerun(ctx, "job_123", batch.RerunOptions{}); return err },
-		"ListRuns":   func() error { _, err := client.ListRuns(ctx, "job_123", batch.ListRunsOptions{}); return err },
-		"GetRun":     func() error { _, err := client.GetRun(ctx, "job_123", "run_1"); return err },
-		"DeleteRun":  func() error { return client.DeleteRun(ctx, "job_123", "run_1") },
-		"GetResults": func() error { _, err := client.GetResults(ctx, "job_123", batch.GetResultsOptions{}); return err },
+		"GetJob":     func() error { _, err := client.GetJob(ctx, testJobID); return err },
+		"DeleteJob":  func() error { return client.DeleteJob(ctx, testJobID) },
+		"AddTasks":   func() error { _, err := client.AddTasks(ctx, testJobID, nil, false); return err },
+		"CloseJob":   func() error { _, err := client.CloseJob(ctx, testJobID); return err },
+		"StopRun":    func() error { _, err := client.StopRun(ctx, testJobID); return err },
+		"Rerun":      func() error { _, err := client.Rerun(ctx, testJobID, batch.RerunOptions{}); return err },
+		"ListRuns":   func() error { _, err := client.ListRuns(ctx, testJobID, batch.ListRunsOptions{}); return err },
+		"GetRun":     func() error { _, err := client.GetRun(ctx, testJobID, "run_1"); return err },
+		"DeleteRun":  func() error { return client.DeleteRun(ctx, testJobID, "run_1") },
+		"GetResults": func() error { _, err := client.GetResults(ctx, testJobID, batch.GetResultsOptions{}); return err },
 		"GetTaskContent": func() error {
-			_, err := client.GetTaskContent(ctx, "job_123", "task_1", batch.GetTaskContentOptions{})
+			_, err := client.GetTaskContent(ctx, testJobID, "task_1", batch.GetTaskContentOptions{})
 			return err
 		},
 	}
 
 	for name, call := range cases {
 		err := call()
-		if _, ok := err.(batch.NotConfiguredError); !ok {
+		var notConfigured batch.NotConfiguredError
+		if !errors.As(err, &notConfigured) {
 			t.Errorf("%s: expected NotConfiguredError, got %v (%T)", name, err, err)
 		}
 	}
@@ -93,15 +100,15 @@ func TestGetJobReturnsTheProjectedJob(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(batch.Job{JobID: "job_123", Status: batch.JobStatusOpen})
+		_ = json.NewEncoder(w).Encode(batch.Job{JobID: testJobID, Status: batch.JobStatusOpen})
 	})
 	defer closeServer()
 
-	job, err := client.GetJob(context.Background(), "job_123")
+	job, err := client.GetJob(context.Background(), testJobID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if job.JobID() != "job_123" {
+	if job.JobID() != testJobID {
 		t.Fatalf("unexpected job: %+v", job)
 	}
 }
@@ -114,7 +121,7 @@ func TestDeleteJobSendsDeleteAndSucceedsOnNoBody(t *testing.T) {
 	})
 	defer closeServer()
 
-	if err := client.DeleteJob(context.Background(), "job_123"); err != nil {
+	if err := client.DeleteJob(context.Background(), testJobID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotMethod != http.MethodDelete {
@@ -128,11 +135,11 @@ func TestStopRunReturnsUpdatedJob(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(batch.Job{JobID: "job_123"})
+		_ = json.NewEncoder(w).Encode(batch.Job{JobID: testJobID})
 	})
 	defer closeServer()
 
-	if _, err := client.StopRun(context.Background(), "job_123"); err != nil {
+	if _, err := client.StopRun(context.Background(), testJobID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -142,11 +149,11 @@ func TestRerunWithoutStatusSendsNoQueryParam(t *testing.T) {
 	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(batch.RerunJobResponse{JobID: "job_123"})
+		_ = json.NewEncoder(w).Encode(batch.RerunJobResponse{JobID: testJobID})
 	})
 	defer closeServer()
 
-	if _, err := client.Rerun(context.Background(), "job_123", batch.RerunOptions{}); err != nil {
+	if _, err := client.Rerun(context.Background(), testJobID, batch.RerunOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotQuery != "" {
@@ -164,11 +171,11 @@ func TestRerunWithStatusSendsItAsQueryParamNotBody(t *testing.T) {
 		gotHeader = r.Header.Get("Idempotency-Key")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(batch.RerunJobResponse{JobID: "job_123"})
+		_ = json.NewEncoder(w).Encode(batch.RerunJobResponse{JobID: testJobID})
 	})
 	defer closeServer()
 
-	_, err := client.Rerun(context.Background(), "job_123", batch.RerunOptions{
+	_, err := client.Rerun(context.Background(), testJobID, batch.RerunOptions{
 		Status: "failed,pending", IdempotencyKey: "retry-1",
 	})
 	if err != nil {
@@ -194,7 +201,7 @@ func TestListRunsForwardsPagination(t *testing.T) {
 	})
 	defer closeServer()
 
-	if _, err := client.ListRuns(context.Background(), "job_123", batch.ListRunsOptions{Limit: 5, Cursor: "xyz"}); err != nil {
+	if _, err := client.ListRuns(context.Background(), testJobID, batch.ListRunsOptions{Limit: 5, Cursor: "xyz"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	q, _ := parseQuery(gotQuery)
@@ -205,7 +212,7 @@ func TestListRunsForwardsPagination(t *testing.T) {
 
 func TestGetRunReturnsRun(t *testing.T) {
 	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/jobs/job_123/runs/run_1" {
+		if r.URL.Path != testJobRunPath {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -213,7 +220,7 @@ func TestGetRunReturnsRun(t *testing.T) {
 	})
 	defer closeServer()
 
-	run, err := client.GetRun(context.Background(), "job_123", "run_1")
+	run, err := client.GetRun(context.Background(), testJobID, "run_1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -230,10 +237,10 @@ func TestDeleteRunSendsDelete(t *testing.T) {
 	})
 	defer closeServer()
 
-	if err := client.DeleteRun(context.Background(), "job_123", "run_1"); err != nil {
+	if err := client.DeleteRun(context.Background(), testJobID, "run_1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotMethod != http.MethodDelete || gotPath != "/jobs/job_123/runs/run_1" {
+	if gotMethod != http.MethodDelete || gotPath != testJobRunPath {
 		t.Fatalf("unexpected request: %s %s", gotMethod, gotPath)
 	}
 }
@@ -247,7 +254,7 @@ func TestGetTaskContentLatestRun(t *testing.T) {
 	})
 	defer closeServer()
 
-	content, err := client.GetTaskContent(context.Background(), "job_123", "task_1", batch.GetTaskContentOptions{})
+	content, err := client.GetTaskContent(context.Background(), testJobID, "task_1", batch.GetTaskContentOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -265,7 +272,7 @@ func TestGetTaskContentSpecificRun(t *testing.T) {
 	})
 	defer closeServer()
 
-	content, err := client.GetTaskContent(context.Background(), "job_123", "task_1", batch.GetTaskContentOptions{RunID: "run_1"})
+	content, err := client.GetTaskContent(context.Background(), testJobID, "task_1", batch.GetTaskContentOptions{RunID: "run_1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -282,9 +289,9 @@ func TestGetTaskContentSurfacesAPIErrorOnFailure(t *testing.T) {
 	})
 	defer closeServer()
 
-	_, err := client.GetTaskContent(context.Background(), "job_123", "missing", batch.GetTaskContentOptions{})
-	apiErr, ok := err.(batch.APIError)
-	if !ok {
+	_, err := client.GetTaskContent(context.Background(), testJobID, "missing", batch.GetTaskContentOptions{})
+	var apiErr batch.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected batch.APIError, got %v (%T)", err, err)
 	}
 	if apiErr.StatusCode != http.StatusNotFound {
@@ -303,9 +310,9 @@ func TestAPIErrorGracefullyHandlesNonJSONErrorBody(t *testing.T) {
 	})
 	defer closeServer()
 
-	_, err := client.GetJob(context.Background(), "job_123")
-	apiErr, ok := err.(batch.APIError)
-	if !ok {
+	_, err := client.GetJob(context.Background(), testJobID)
+	var apiErr batch.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected batch.APIError even for a non-JSON error body, got %v (%T)", err, err)
 	}
 	if apiErr.StatusCode != http.StatusBadGateway {
@@ -327,7 +334,7 @@ func TestSubmitJobForwardsIdempotencyKeyAsHeaderNotBody(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(batch.SubmitJobResponse{JobID: "job_123"})
+		_ = json.NewEncoder(w).Encode(batch.SubmitJobResponse{JobID: testJobID})
 	})
 	defer closeServer()
 
@@ -356,7 +363,7 @@ func TestOptionsConfigureBaseURLAndAPIKey(t *testing.T) {
 	defer server.Close()
 
 	client := batch.NewClient(batch.WithBaseURL(server.URL), batch.WithAPIKey("custom-key"))
-	if _, err := client.GetJob(context.Background(), "job_123"); err != nil {
+	if _, err := client.GetJob(context.Background(), testJobID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotKey != "custom-key" {

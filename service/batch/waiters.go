@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// WaiterTimeout is returned when a waiter's timeout elapsed before the target state.
-type WaiterTimeout struct {
+// WaiterTimeoutError is returned when a waiter's timeout elapsed before the target state.
+type WaiterTimeoutError struct {
 	Timeout time.Duration
 }
 
-func (e WaiterTimeout) Error() string {
+func (e WaiterTimeoutError) Error() string {
 	return fmt.Sprintf("waiter: timed out after %s waiting for target state", e.Timeout)
 }
 
@@ -44,13 +44,31 @@ func defaultPollOptions() pollOptions {
 	}
 }
 
+// withPollDefaults fills any zero-value field in opts from defaultPollOptions.
+func withPollDefaults(opts pollOptions) pollOptions {
+	defaults := defaultPollOptions()
+	if opts.Timeout <= 0 {
+		opts.Timeout = defaults.Timeout
+	}
+	if opts.InitialInterval <= 0 {
+		opts.InitialInterval = defaults.InitialInterval
+	}
+	if opts.MaxInterval <= 0 {
+		opts.MaxInterval = defaults.MaxInterval
+	}
+	if opts.Backoff <= 0 {
+		opts.Backoff = defaults.Backoff
+	}
+	return opts
+}
+
 // pollUntil calls fetch repeatedly until isDone(value) is true (returns the value), or
 // isFailure(value) is true (returns WaiterError), or the timeout elapses (returns
-// WaiterTimeout), or ctx is done (returns ctx.Err()).
+// WaiterTimeoutError), or ctx is done (returns ctx.Err()).
 //
 // The wait between calls starts at InitialInterval, multiplies by Backoff each iteration,
 // caps at MaxInterval, and is jittered by +/-Jitter fraction so concurrent waiters don't
-// synchronise into thundering-herd patterns against the API.
+// synchronize into thundering-herd patterns against the API.
 func pollUntil[T any](
 	ctx context.Context,
 	fetch func(context.Context) (T, error),
@@ -58,18 +76,7 @@ func pollUntil[T any](
 	isFailure func(T) bool,
 	opts pollOptions,
 ) (T, error) {
-	if opts.Timeout <= 0 {
-		opts.Timeout = defaultPollOptions().Timeout
-	}
-	if opts.InitialInterval <= 0 {
-		opts.InitialInterval = defaultPollOptions().InitialInterval
-	}
-	if opts.MaxInterval <= 0 {
-		opts.MaxInterval = defaultPollOptions().MaxInterval
-	}
-	if opts.Backoff <= 0 {
-		opts.Backoff = defaultPollOptions().Backoff
-	}
+	opts = withPollDefaults(opts)
 
 	deadline := time.Now().Add(opts.Timeout)
 	interval := opts.InitialInterval
@@ -89,7 +96,7 @@ func pollUntil[T any](
 
 		now := time.Now()
 		if !now.Before(deadline) {
-			return zero, WaiterTimeout{Timeout: opts.Timeout}
+			return zero, WaiterTimeoutError{Timeout: opts.Timeout}
 		}
 
 		remaining := deadline.Sub(now)
@@ -97,7 +104,7 @@ func pollUntil[T any](
 		if sleep > remaining {
 			sleep = remaining
 		}
-		jitterFactor := 1.0 + (rand.Float64()*2-1)*opts.Jitter
+		jitterFactor := 1.0 + (rand.Float64()*2-1)*opts.Jitter //nolint:gosec // timing jitter, not security-sensitive
 		sleep = time.Duration(float64(sleep) * jitterFactor)
 		if sleep > 0 {
 			timer := time.NewTimer(sleep)

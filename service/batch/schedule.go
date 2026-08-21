@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// utcOffsetLength is the length of a trailing "+HH:MM" / "-HH:MM" timezone offset.
+const utcOffsetLength = 6
+
 var daysOfWeek = map[string]bool{
 	"mon": true, "tue": true, "wed": true, "thu": true, "fri": true, "sat": true, "sun": true,
 }
@@ -38,8 +41,8 @@ func hasTZSuffix(raw string) bool {
 	if strings.HasSuffix(tail, "Z") || strings.HasSuffix(tail, "z") {
 		return true
 	}
-	if len(tail) >= 6 {
-		c := tail[len(tail)-6]
+	if len(tail) >= utcOffsetLength {
+		c := tail[len(tail)-utcOffsetLength]
 		return c == '+' || c == '-'
 	}
 	return false
@@ -73,10 +76,13 @@ func NewAt(at, timezone string) (At, error) {
 		return At{}, err
 	}
 	if strings.TrimSpace(at) == "" {
-		return At{}, fmt.Errorf("At.at must be a non-empty ISO timestamp string")
+		return At{}, fmt.Errorf("invalid At.at: must be a non-empty ISO timestamp string")
 	}
 	if hasTZSuffix(at) {
-		return At{}, fmt.Errorf("At.at %q must be tz-naive (no Z, no offset); supply timezone separately to keep DST transitions deterministic", at)
+		return At{}, fmt.Errorf(
+			"invalid At.at %q: must be tz-naive (no Z, no offset); supply timezone separately to keep DST transitions deterministic",
+			at,
+		)
 	}
 	return At{at: at, timezone: timezone}, nil
 }
@@ -102,12 +108,12 @@ type Rate struct {
 // NewRate builds an interval-based schedule. unit is one of "minute", "hour", "day".
 func NewRate(every int, unit string) (Rate, error) {
 	if every < 1 {
-		return Rate{}, fmt.Errorf("Rate.every must be >= 1, got %d", every)
+		return Rate{}, fmt.Errorf("invalid Rate.every: must be >= 1, got %d", every)
 	}
 	switch unit {
 	case "minute", "hour", "day":
 	default:
-		return Rate{}, fmt.Errorf("Rate.unit must be one of \"minute\", \"hour\", \"day\"; got %q", unit)
+		return Rate{}, fmt.Errorf("invalid Rate.unit: must be one of \"minute\", \"hour\", \"day\"; got %q", unit)
 	}
 	return Rate{every: every, unit: unit}, nil
 }
@@ -137,11 +143,13 @@ type Weekly struct {
 // fri/sat/sun), at least one required.
 func NewWeekly(days []string) (Weekly, error) {
 	if len(days) == 0 {
-		return Weekly{}, fmt.Errorf("Weekly.days must be non-empty")
+		return Weekly{}, fmt.Errorf("invalid Weekly.days: must be non-empty")
 	}
 	for _, d := range days {
 		if !daysOfWeek[d] {
-			return Weekly{}, fmt.Errorf("Weekly.days entry %q is not a valid day (use one of mon, tue, wed, thu, fri, sat, sun)", d)
+			return Weekly{}, fmt.Errorf(
+				"invalid Weekly.days entry %q: not a valid day (use one of mon, tue, wed, thu, fri, sat, sun)", d,
+			)
 		}
 	}
 	return Weekly{days: append([]string(nil), days...)}, nil
@@ -160,11 +168,11 @@ type Monthly struct {
 // exist in a given month (e.g. 31 in April) are silently skipped by the scheduler.
 func NewMonthly(days []int) (Monthly, error) {
 	if len(days) == 0 {
-		return Monthly{}, fmt.Errorf("Monthly.days must be non-empty")
+		return Monthly{}, fmt.Errorf("invalid Monthly.days: must be non-empty")
 	}
 	for _, d := range days {
 		if d < 1 || d > 31 {
-			return Monthly{}, fmt.Errorf("Monthly.days entry %d is out of range (1..31)", d)
+			return Monthly{}, fmt.Errorf("invalid Monthly.days entry %d: out of range (1..31)", d)
 		}
 	}
 	return Monthly{days: append([]int(nil), days...)}, nil
@@ -190,7 +198,7 @@ func NewCalendar(timesOfDay []string, cadence Cadence, timezone string) (Calenda
 		return Calendar{}, err
 	}
 	if len(timesOfDay) == 0 {
-		return Calendar{}, fmt.Errorf("Calendar.times_of_day must be non-empty")
+		return Calendar{}, fmt.Errorf("invalid Calendar.times_of_day: must be non-empty")
 	}
 	for _, t := range timesOfDay {
 		if err := validateFullHour(t); err != nil {
@@ -198,7 +206,7 @@ func NewCalendar(timesOfDay []string, cadence Cadence, timezone string) (Calenda
 		}
 	}
 	if cadence == nil {
-		return Calendar{}, fmt.Errorf("Calendar.cadence must be Daily{}, Weekly, or Monthly")
+		return Calendar{}, fmt.Errorf("invalid Calendar.cadence: must be Daily{}, Weekly, or Monthly")
 	}
 	return Calendar{
 		timesOfDay: append([]string(nil), timesOfDay...),
