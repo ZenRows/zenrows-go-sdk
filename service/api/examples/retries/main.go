@@ -10,17 +10,20 @@ import (
 )
 
 const (
-	maxConcurrentRequests = 5  // run 5 scraping requests at the same time
-	totalRequests         = 10 // send a total of 10 scraping requests
+	maxConcurrentRequests = 5                // run 5 scraping requests at the same time
+	totalRequests         = 10               // send a total of 10 scraping requests
+	maxRetryCount         = 5                // retry up to five times
+	retryWait             = 20 * time.Second // waiting at least 20s between retries (just for demonstration purposes!)
+	retryMaxWait          = 25 * time.Second // and waiting a maximum of 25s between retries
 )
 
 func main() {
 	client := scraperapi.NewClient(
 		scraperapi.WithAPIKey("YOUR_API_KEY"),
 		scraperapi.WithMaxConcurrentRequests(maxConcurrentRequests),
-		scraperapi.WithMaxRetryCount(5),                 // retry up to five times
-		scraperapi.WithRetryWaitTime(20*time.Second),    // waiting at least 20s between retries (just for demonstration purposes!)
-		scraperapi.WithRetryMaxWaitTime(25*time.Second), // and waiting a maximum of 20s between retries
+		scraperapi.WithMaxRetryCount(maxRetryCount),
+		scraperapi.WithRetryWaitTime(retryWait),
+		scraperapi.WithRetryMaxWaitTime(retryMaxWait),
 	)
 
 	var wg sync.WaitGroup

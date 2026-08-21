@@ -425,7 +425,7 @@ type HMACKeyList struct {
 // material and is returned ONLY here — capture it now.
 type HMACKeyCreated struct {
 	Kid       string `json:"kid"`
-	Secret    string `json:"secret"`
+	Secret    string `json:"secret"` //nolint:gosec // this is the actual API response field carrying the rotated HMAC secret
 	CreatedAt string `json:"created_at"`
 }
 

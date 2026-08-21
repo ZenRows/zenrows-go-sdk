@@ -251,9 +251,10 @@ func TestHMACKeyLifecycle(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(batch.HMACKeyList{Active: &batch.HMACKeyMeta{Kid: "kid_1"}})
 			}
 		case "/hmac/keys/rotate":
-			if r.Method == http.MethodPost {
-				_ = json.NewEncoder(w).Encode(batch.HMACKeyCreated{Kid: "kid_2", Secret: "c2VjcmV0"})
-			} else if r.Method == http.MethodDelete {
+			switch r.Method {
+			case http.MethodPost:
+				_ = json.NewEncoder(w).Encode(batch.HMACKeyCreated{Kid: "kid_2", Secret: "c2VjcmV0"}) //nolint:gosec // mock test fixture value, not a real secret
+			case http.MethodDelete:
 				w.WriteHeader(http.StatusNoContent)
 			}
 		case "/hmac/keys/rotate/finalize":
@@ -328,8 +329,8 @@ func TestExportLifecycle(t *testing.T) {
 	poll := 0
 	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodPost:
+		switch r.Method {
+		case http.MethodPost:
 			_ = json.NewEncoder(w).Encode(batch.StartExportResponse{ExportID: "exp_1", Status: batch.ExportStatusPending})
 		default:
 			poll++

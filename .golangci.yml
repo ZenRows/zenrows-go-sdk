@@ -1,15 +1,16 @@
+version: "2"
 run:
-  timeout: 5m
-  issues-exit-code: 1
-  tests: true
+  go: ""
   build-tags:
     - integration
   modules-download-mode: readonly
+  issues-exit-code: 1
+  tests: true
   allow-parallel-runners: false
-  go: ''
+output:
+  path-prefix: ""
 linters:
-  disable-all: true
-  fast: false
+  default: none
   enable:
     - asasalint
     - asciicheck
@@ -21,20 +22,15 @@ linters:
     - errorlint
     - exhaustive
     - funlen
-    - gci
     - goconst
     - gocritic
     - gocyclo
-    - gofmt
-    - gofumpt
-    - goimports
-    - mnd
     - gosec
-    - gosimple
     - govet
     - ineffassign
     - lll
     - misspell
+    - mnd
     - nakedret
     - nilerr
     - nilnil
@@ -48,9 +44,7 @@ linters:
     - rowserrcheck
     - sqlclosecheck
     - staticcheck
-    - stylecheck
     - tagliatelle
-    - tenv
     - testableexamples
     - thelper
     - tparallel
@@ -59,119 +53,137 @@ linters:
     - unused
     - usestdlibvars
     - wastedassign
-linters-settings:
-  gci:
-    sections:
-      - standard
-      - default
-  goconst:
-    min-len: 2
-    min-occurrences: 3
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - opinionated
-      - performance
-      - style
-    disabled-checks:
-      - dupImport
-      - octalLiteral
-      - whyNoLint
-      - rangeExprCopy
-      - rangeValCopy
-    settings:
-      hugeParam:
-        # batch's TaskResult/Export/RunHandle are read-only response DTOs passed by
-        # value throughout the package's public API; switching to pointers is a wider
-        # API change than a lint cleanup, so the threshold is raised past their size.
-        sizeThreshold: 256
-  gosec:
-    excludes:
-      - G601
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-    exclude-functions:
-      - io/ioutil.ReadFile
-      - io.Copy(*bytes.Buffer)
-      - io.Copy(os.Stdout)
-  funlen:
-    lines: -1
-    statements: 50
-  mnd:
-    checks:
-      - argument
-      - case
-      - condition
-      - return
-    ignored-numbers:
-      - '0'
-      - '1'
-      - '2'
-      - '3'
-      - '4'
-      - '5'
-      - '24'
-      - '1024'
-    ignored-functions:
-      - strings.SplitN
-  gocyclo:
-    min-complexity: 15
-  gofmt:
-    rewrite-rules:
-      - pattern: 'interface{}'
-        replacement: any
-  govet:
-    disable:
-      - fieldalignment
-  lll:
-    line-length: 140
-  misspell:
-    locale: US
-  nakedret:
-    max-func-lines: 1
-  nolintlint:
-    allow-unused: false
-    require-explanation: false
-    require-specific: true
-  revive:
-    rules:
-      - name: unexported-return
-        disabled: true
-      - name: unused-parameter
-  stylecheck:
-    checks:
-      - all
-      - '-ST1003'
-  tagliatelle:
-    case:
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      exclude-functions:
+        - io/ioutil.ReadFile
+        - io.Copy(*bytes.Buffer)
+        - io.Copy(os.Stdout)
+    exhaustive:
+      default-signifies-exhaustive: true
+    funlen:
+      lines: -1
+      statements: 50
+    goconst:
+      min-len: 2
+      min-occurrences: 3
+    gocritic:
+      disabled-checks:
+        - dupImport
+        - octalLiteral
+        - whyNoLint
+        - rangeExprCopy
+        - rangeValCopy
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+      settings:
+        hugeParam:
+          # batch's TaskResult/Export/RunHandle are read-only response DTOs passed by
+          # value throughout the package's public API; switching to pointers is a wider
+          # API change than a lint cleanup, so the threshold is raised past their size.
+          sizeThreshold: 256
+    gocyclo:
+      min-complexity: 15
+    gosec:
+      excludes:
+        - G601
+    govet:
+      disable:
+        - fieldalignment
+    lll:
+      line-length: 140
+    misspell:
+      locale: US
+    mnd:
+      checks:
+        - argument
+        - case
+        - condition
+        - return
+      ignored-numbers:
+        - "0"
+        - "1"
+        - "2"
+        - "3"
+        - "4"
+        - "5"
+        - "24"
+        - "1024"
+      ignored-functions:
+        - strings.SplitN
+    nakedret:
+      max-func-lines: 1
+    nolintlint:
+      require-explanation: false
+      require-specific: true
+      allow-unused: false
+    revive:
       rules:
-        json: snake
-        yaml: snake
-        xml: camel
-        bson: camel
-        avro: snake
-        mapstructure: kebab
-  exhaustive:
-    default-signifies-exhaustive: true
-output:
-  print-issued-lines: true
-  print-linter-name: true
-  uniq-by-line: false
-  path-prefix: ''
-  sort-results: true
+        - name: unexported-return
+          disabled: true
+        - name: unused-parameter
+    staticcheck:
+      checks:
+        - all
+        - -ST1003
+    tagliatelle:
+      case:
+        rules:
+          avro: snake
+          bson: camel
+          json: snake
+          mapstructure: kebab
+          xml: camel
+          yaml: snake
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+          - gocritic
+          - lll
+          - mnd
+          - revive
+          - unparam
+        path: _test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
   new: false
   fix: false
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gocritic
-        - mnd
-        - lll
-        - revive
-        - unparam
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+    gofmt:
+      rewrite-rules:
+        - pattern: interface{}
+          replacement: any
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
