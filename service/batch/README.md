@@ -64,6 +64,27 @@ estimate := client.EstimateCost([]batch.Task{{URL: "https://example.com"}}, nil)
 fmt.Println(estimate) // "1 credits (1 tasks)"
 ```
 
+## Extract in a batch
+
+Set `extract` in `ZenRowsParams` to run tasks through Extract — structured data instead of raw
+HTML. It works job-wide or per task, and per-task values win on collision.
+
+```go
+job, err := client.SubmitRegular(ctx, batch.SubmitRegularOptions{
+    Tasks: []batch.Task{
+        // Inherits the job-level params below.
+        {URL: "https://example.com/products", ExternalID: "p1"},
+        // Overrides them for this task only.
+        {URL: "https://example.com/raw", ZenRowsParams: map[string]any{}},
+    },
+    ZenRowsParams: map[string]any{"extract": "auto"},
+})
+```
+
+An Extract task's result carries two keys — `html` (the raw page) and `parsed` (the structured
+data). It costs the same as a regular task, so `EstimateCost` prices it correctly.
+`extract_fields` is not supported in Batch yet.
+
 ## Client Initialization
 
 Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment variable, and optionally
