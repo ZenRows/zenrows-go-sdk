@@ -18,9 +18,6 @@ ZenRows® provides a powerful web scraping toolkit to help you collect, process,
 Whether you need scalable data extraction, a robust browser solution for dynamic websites or residential proxies to
 access geo-targeted content, we have the right tools for your specific use cases.
 
-This repository hosts the official Go SDKs for integrating with different ZenRows services. Each SDK is located in
-its respective subdirectory and includes comprehensive documentation, installation instructions, and usage examples.
-
 ## Table of Contents
 
 - [Overview](#overview)
@@ -30,6 +27,11 @@ its respective subdirectory and includes comprehensive documentation, installati
 - [Other Languages](#other-languages)
 - [Contributing](#contributing)
 - [License](#license)
+
+## Overview
+
+This repository hosts the official Go SDKs for integrating with different ZenRows services. Each SDK is located in
+its respective subdirectory and includes comprehensive documentation, installation instructions, and usage examples.
 
 ## SDKs
 
