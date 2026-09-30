@@ -146,7 +146,7 @@ func (i IngestStatus) IsKnown() bool {
 }
 
 // FailureReason is the account-level cause of a run auto-failing. Present only when
-// Run.Status == RunStatusFailed.
+// Run.Status == RunStatusFailed; Run.FailureDetail carries a human-readable explanation.
 // The server may add values not listed here, and they decode as-is; callers must handle
 // unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type FailureReason string
@@ -154,12 +154,16 @@ type FailureReason string
 const (
 	FailureReasonInsufficientCredits  FailureReason = "insufficient_credits"
 	FailureReasonSubscriptionInactive FailureReason = "subscription_inactive"
+	// FailureReasonAPIKeyCapReached means the job's API key reached one of its credit caps
+	// (day, week, month or billing period). It resolves when that cap's window resets or the
+	// cap is raised; other keys on the account are unaffected.
+	FailureReasonAPIKeyCapReached FailureReason = "api_key_cap_reached" //nolint:gosec // an enum value, not a credential
 )
 
 // IsKnown reports whether f is one of the FailureReason constants this SDK version defines.
 func (f FailureReason) IsKnown() bool {
 	switch f {
-	case FailureReasonInsufficientCredits, FailureReasonSubscriptionInactive:
+	case FailureReasonInsufficientCredits, FailureReasonSubscriptionInactive, FailureReasonAPIKeyCapReached:
 		return true
 	default:
 		return false
@@ -247,8 +251,11 @@ type Run struct {
 	PauseState        PauseState    `json:"pause_state,omitempty"`
 	IngestStatus      IngestStatus  `json:"ingest_status,omitempty"`
 	FailureReason     FailureReason `json:"failure_reason,omitempty"`
-	CreatedAt         string        `json:"created_at"`
-	UpdatedAt         string        `json:"updated_at"`
+	// FailureDetail is a human-readable explanation of FailureReason (e.g. which cap, and when
+	// it resets, UTC). Nil when absent or null.
+	FailureDetail *string `json:"failure_detail,omitempty"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
 }
 
 // ScheduleRate is an interval-based schedule fire policy — every N units.
