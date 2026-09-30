@@ -9,6 +9,8 @@ const (
 )
 
 // JobStatus is the lifecycle state of a job.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type JobStatus string
 
 const (
@@ -19,6 +21,16 @@ const (
 	JobStatusDeleted JobStatus = "deleted"
 )
 
+// IsKnown reports whether j is one of the JobStatus constants this SDK version defines.
+func (j JobStatus) IsKnown() bool {
+	switch j {
+	case JobStatusOpen, JobStatusClosed, JobStatusDeleted:
+		return true
+	default:
+		return false
+	}
+}
+
 // ScheduleState is the run/pause flag on a scheduled job's future fires.
 type ScheduleState string
 
@@ -28,6 +40,8 @@ const (
 )
 
 // RunStatus is the lifecycle state of a single run of a job.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type RunStatus string
 
 const (
@@ -39,6 +53,16 @@ const (
 	RunStatusDeleted   RunStatus = "deleted"
 )
 
+// IsKnown reports whether r is one of the RunStatus constants this SDK version defines.
+func (r RunStatus) IsKnown() bool {
+	switch r {
+	case RunStatusRunning, RunStatusPending, RunStatusCompleted, RunStatusStopped, RunStatusFailed, RunStatusDeleted:
+		return true
+	default:
+		return false
+	}
+}
+
 // TerminalRunStatuses are the statuses a run never transitions out of. The default target
 // for WaitForRun.
 var TerminalRunStatuses = map[RunStatus]bool{
@@ -48,6 +72,8 @@ var TerminalRunStatuses = map[RunStatus]bool{
 }
 
 // TaskStatus is the lifecycle state of one task within a run.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type TaskStatus string
 
 const (
@@ -57,7 +83,19 @@ const (
 	TaskStatusFailed     TaskStatus = "failed"
 )
 
+// IsKnown reports whether t is one of the TaskStatus constants this SDK version defines.
+func (t TaskStatus) IsKnown() bool {
+	switch t {
+	case TaskStatusPending, TaskStatusProcessing, TaskStatusSuccessful, TaskStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // ResultType is the body format of a successful task result.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type ResultType string
 
 const (
@@ -67,6 +105,16 @@ const (
 	ResultTypePlaintext ResultType = "plaintext"
 	ResultTypePDF       ResultType = "pdf"
 )
+
+// IsKnown reports whether r is one of the ResultType constants this SDK version defines.
+func (r ResultType) IsKnown() bool {
+	switch r {
+	case ResultTypeHTML, ResultTypeJSON, ResultTypeMarkdown, ResultTypePlaintext, ResultTypePDF:
+		return true
+	default:
+		return false
+	}
+}
 
 // PauseState is the reversible-suspend flag on a run, orthogonal to RunStatus.
 type PauseState string
@@ -78,6 +126,8 @@ const (
 
 // IngestStatus reports whether a large (202) submission's task rows have finished streaming
 // into storage. Present only on runs created that way.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type IngestStatus string
 
 const (
@@ -85,8 +135,20 @@ const (
 	IngestStatusDone    IngestStatus = "done"
 )
 
+// IsKnown reports whether i is one of the IngestStatus constants this SDK version defines.
+func (i IngestStatus) IsKnown() bool {
+	switch i {
+	case IngestStatusPending, IngestStatusDone:
+		return true
+	default:
+		return false
+	}
+}
+
 // FailureReason is the account-level cause of a run auto-failing. Present only when
 // Run.Status == RunStatusFailed.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type FailureReason string
 
 const (
@@ -94,7 +156,19 @@ const (
 	FailureReasonSubscriptionInactive FailureReason = "subscription_inactive"
 )
 
+// IsKnown reports whether f is one of the FailureReason constants this SDK version defines.
+func (f FailureReason) IsKnown() bool {
+	switch f {
+	case FailureReasonInsufficientCredits, FailureReasonSubscriptionInactive:
+		return true
+	default:
+		return false
+	}
+}
+
 // ExportStatus is the lifecycle state of a results export.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type ExportStatus string
 
 const (
@@ -103,6 +177,16 @@ const (
 	ExportStatusCompleted ExportStatus = "completed"
 	ExportStatusFailed    ExportStatus = "failed"
 )
+
+// IsKnown reports whether e is one of the ExportStatus constants this SDK version defines.
+func (e ExportStatus) IsKnown() bool {
+	switch e {
+	case ExportStatusPending, ExportStatusRunning, ExportStatusCompleted, ExportStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
 
 // TerminalExportStatuses are the export statuses that don't transition again. The default
 // target for WaitForExport.

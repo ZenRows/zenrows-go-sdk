@@ -131,6 +131,11 @@ Jobs: `ListJobs`/`IterJobs`, `GetJob`, `DeleteJob`, `AddTasks`, `CloseJob`, `Sto
   RFC 7807 Problem JSON body when the response could be decoded as such; `.Code()` returns the
   stable problem code (e.g. `idempotency_key_conflict`), or `"internal"` if the body wasn't parseable.
 
+- String enums on responses (`JobStatus`, `RunStatus`, `TaskStatus`, `ResultType`, `IngestStatus`,
+  `FailureReason`, `ExportStatus`) are extensible: the server may return values this SDK has no
+  constant for. They decode without error, so always handle a default case; each type's `IsKnown()`
+  reports whether a value is one this SDK version defines.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](../../LICENSE) file for details.
