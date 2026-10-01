@@ -14,6 +14,8 @@ import (
 	"github.com/zenrows/zenrows-go-sdk/service/batch"
 )
 
+const testCapReachedDetail = "API key reached its credit cap"
+
 func TestJobRefLoadDeleteRerunRetryFailed(t *testing.T) {
 	var lastMethod, lastPath, lastQuery string
 	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -318,7 +320,7 @@ func TestDownloadToDirUsesExternalIDFilenameWhenRequested(t *testing.T) {
 func newRunningThenFailedClient(t *testing.T) (*batch.Client, *int, func()) {
 	t.Helper()
 	polls := 0
-	detail := "API key reached its credit cap"
+	detail := testCapReachedDetail
 	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/jobs/job_cap/runs/run_cap" {
@@ -353,7 +355,7 @@ func TestWaitForRunReturnsFailedRun(t *testing.T) {
 	if run.Status != batch.RunStatusFailed || run.FailureReason != batch.FailureReasonAPIKeyCapReached {
 		t.Fatalf("expected failed/api_key_cap_reached, got %+v", run)
 	}
-	if run.FailureDetail == nil || *run.FailureDetail != "API key reached its credit cap" {
+	if run.FailureDetail == nil || *run.FailureDetail != testCapReachedDetail {
 		t.Fatalf("expected failure_detail intact, got %v", run.FailureDetail)
 	}
 }
@@ -371,7 +373,7 @@ func TestRunRefWaitReturnsFailedRun(t *testing.T) {
 	if handle.Status() != batch.RunStatusFailed || handle.Data.FailureReason != batch.FailureReasonAPIKeyCapReached {
 		t.Fatalf("expected failed/api_key_cap_reached, got %+v", handle.Data)
 	}
-	if handle.Data.FailureDetail == nil || *handle.Data.FailureDetail != "API key reached its credit cap" {
+	if handle.Data.FailureDetail == nil || *handle.Data.FailureDetail != testCapReachedDetail {
 		t.Fatalf("expected failure_detail intact, got %v", handle.Data.FailureDetail)
 	}
 }
