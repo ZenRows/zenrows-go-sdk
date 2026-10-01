@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/zenrows/zenrows-go-sdk/service/batch"
 )
@@ -311,5 +312,80 @@ func TestDownloadToDirUsesExternalIDFilenameWhenRequested(t *testing.T) {
 	// Unsafe filename characters (space, #, /) must be coerced to underscores.
 	if _, err := os.Stat(filepath.Join(dir, "order__1_weird.html")); err != nil {
 		t.Fatalf("expected a coerced external-id filename, got dir contents error: %v", err)
+	}
+}
+
+func newRunningThenFailedClient(t *testing.T) (*batch.Client, *int, func()) {
+	t.Helper()
+	polls := 0
+	detail := "API key reached its credit cap"
+	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/jobs/job_cap/runs/run_cap" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		polls++
+		run := batch.Run{RunID: "run_cap", Status: batch.RunStatusRunning}
+		if polls >= 2 {
+			run.Status = batch.RunStatusFailed
+			run.FailureReason = batch.FailureReasonAPIKeyCapReached
+			run.FailureDetail = &detail
+		}
+		_ = json.NewEncoder(w).Encode(run)
+	})
+	return client, &polls, closeServer
+}
+
+func TestWaitForRunReturnsFailedRun(t *testing.T) {
+	client, polls, closeServer := newRunningThenFailedClient(t)
+	defer closeServer()
+
+	run, err := client.WaitForRun(context.Background(), "job_cap", batch.WaitForRunOptions{
+		RunID: "run_cap", PollInterval: time.Millisecond, Timeout: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("expected the failed run to be returned, got error: %v", err)
+	}
+	if *polls != 2 {
+		t.Fatalf("expected 2 polls, got %d", *polls)
+	}
+	if run.Status != batch.RunStatusFailed || run.FailureReason != batch.FailureReasonAPIKeyCapReached {
+		t.Fatalf("expected failed/api_key_cap_reached, got %+v", run)
+	}
+	if run.FailureDetail == nil || *run.FailureDetail != "API key reached its credit cap" {
+		t.Fatalf("expected failure_detail intact, got %v", run.FailureDetail)
+	}
+}
+
+func TestRunRefWaitReturnsFailedRun(t *testing.T) {
+	client, _, closeServer := newRunningThenFailedClient(t)
+	defer closeServer()
+
+	handle, err := client.Run("job_cap", "run_cap").Wait(context.Background(), batch.WaitForRunOptions{
+		PollInterval: time.Millisecond, Timeout: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("expected the failed run to be returned, got error: %v", err)
+	}
+	if handle.Status() != batch.RunStatusFailed || handle.Data.FailureReason != batch.FailureReasonAPIKeyCapReached {
+		t.Fatalf("expected failed/api_key_cap_reached, got %+v", handle.Data)
+	}
+	if handle.Data.FailureDetail == nil || *handle.Data.FailureDetail != "API key reached its credit cap" {
+		t.Fatalf("expected failure_detail intact, got %v", handle.Data.FailureDetail)
+	}
+}
+
+func TestWaitForRunFailureStatusesWinsOverTerminal(t *testing.T) {
+	client, _, closeServer := newRunningThenFailedClient(t)
+	defer closeServer()
+
+	_, err := client.WaitForRun(context.Background(), "job_cap", batch.WaitForRunOptions{
+		RunID: "run_cap", FailureStatuses: map[batch.RunStatus]bool{batch.RunStatusFailed: true},
+		PollInterval: time.Millisecond, Timeout: 500 * time.Millisecond,
+	})
+	var werr batch.WaiterError
+	if !errors.As(err, &werr) {
+		t.Fatalf("expected WaiterError, got %v", err)
 	}
 }

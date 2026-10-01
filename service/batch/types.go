@@ -64,10 +64,13 @@ func (r RunStatus) IsKnown() bool {
 }
 
 // TerminalRunStatuses are the statuses a run never transitions out of. The default target
-// for WaitForRun.
+// for WaitForRun. RunStatusFailed is an account-level auto-fail (e.g.
+// FailureReasonAPIKeyCapReached); the waiter returns that run with its FailureReason and
+// FailureDetail rather than polling until the timeout.
 var TerminalRunStatuses = map[RunStatus]bool{
 	RunStatusCompleted: true,
 	RunStatusStopped:   true,
+	RunStatusFailed:    true,
 	RunStatusDeleted:   true,
 }
 
