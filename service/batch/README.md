@@ -130,6 +130,10 @@ Jobs: `ListJobs`/`IterJobs`, `GetJob`, `DeleteJob`, `AddTasks`, `CloseJob`, `Sto
 - `APIError`: a non-2xx response. `StatusCode` carries the HTTP status; `Detail` carries the parsed
   RFC 7807 Problem JSON body when the response could be decoded as such; `.Code()` returns the
   stable problem code (e.g. `idempotency_key_conflict`), or `"internal"` if the body wasn't parseable.
+- Starting, rerunning or resuming a job whose API key hit one of its credit caps returns an `APIError`
+  with `StatusCode` 402 and `.Code() == "api_key_cap_reached"`; `Detail.Detail` names the cap and when
+  it resets (UTC). A run the server auto-fails carries `FailureReason` (e.g.
+  `FailureReasonAPIKeyCapReached`) and a human-readable `FailureDetail`.
 
 - String enums on responses (`JobStatus`, `RunStatus`, `TaskStatus`, `ResultType`, `IngestStatus`,
   `FailureReason`, `ExportStatus`) are extensible: the server may return values this SDK has no

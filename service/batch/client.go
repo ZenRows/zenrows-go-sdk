@@ -532,12 +532,14 @@ func (c *Client) postScheduleState(ctx context.Context, jobID string, state Sche
 // WaitForRunOptions configures WaitForRun / JobRef.Run().Wait / RunRef.Wait.
 type WaitForRunOptions struct {
 	// RunID waits on a specific run. Leave empty to wait on the job's current run.
-	RunID           string
-	TargetStatuses  map[RunStatus]bool // defaults to TerminalRunStatuses
-	FailureStatuses map[RunStatus]bool // nil disables failure detection
-	Timeout         time.Duration      // defaults to 300s
-	PollInterval    time.Duration      // defaults to 2s
-	MaxPollInterval time.Duration      // defaults to 15s
+	RunID          string
+	TargetStatuses map[RunStatus]bool // defaults to TerminalRunStatuses (failed included)
+	// FailureStatuses return a WaiterError instead; they take precedence over TargetStatuses,
+	// so {RunStatusFailed: true} makes a failed run an error. nil disables failure detection.
+	FailureStatuses map[RunStatus]bool
+	Timeout         time.Duration // defaults to 300s
+	PollInterval    time.Duration // defaults to 2s
+	MaxPollInterval time.Duration // defaults to 15s
 }
 
 // WaitForRun blocks until a run reaches one of opts.TargetStatuses, polling with jittered
@@ -577,7 +579,8 @@ func (c *Client) WaitForRun(ctx context.Context, jobID string, opts WaitForRunOp
 		if r.Status == "" {
 			return false
 		}
-		return target[r.Status]
+		// A status the caller named as a failure is an error, even when it is also a target.
+		return target[r.Status] && !opts.FailureStatuses[r.Status]
 	}
 	var isFailure func(Run) bool
 	if opts.FailureStatuses != nil {
