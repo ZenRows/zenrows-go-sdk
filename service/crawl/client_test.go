@@ -73,7 +73,7 @@ func TestCreateSendsOnlySetFields(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Location", "/v1/crawls/"+testCrawlID)
 		writeJSON(w, http.StatusAccepted, `{"crawl_id":"c_123","status":"running","url":"https://example.com/",
-			"depth":1,"max_items":10,"max_pages":10,"discovery":["links"],
+			"depth":1,"max_items":10,"max_pages":10,
 			"coverage":{"pages_fetched":0,"pages_failed":0,"items_found":0},"created_at":"2026-10-08T10:00:00Z"}`)
 	})
 
@@ -113,7 +113,7 @@ func TestGetParsesResultsAndForwardsPaging(t *testing.T) {
 		gotQuery = r.URL.RawQuery
 		writeJSON(w, http.StatusOK, `{"crawl_id":"c_123","status":"completed","stop_reason":"max_items",
 			"url":"https://example.com/","depth":1,"max_items":2,"max_pages":5,"output_format":"html",
-			"discovery":["links"],"extract_calls":0,"a_field_added_later":true,
+			"a_field_added_later":true,
 			"coverage":{"pages_fetched":3,"pages_failed":0,"items_found":2},"duplicates_removed":1,
 			"created_at":"2026-10-08T10:00:00Z","finished_at":"2026-10-08T10:01:00Z",
 			"results":[{"url":"https://example.com/product/a","content_status":"fetched",
@@ -327,7 +327,7 @@ func TestErrorMapping(t *testing.T) {
 }
 
 func TestNotEnabledErrorMessage(t *testing.T) {
-	err := crawl.APIError{StatusCode: http.StatusForbidden, Detail: &crawl.Problem{Code: "REQS008", Detail: "beta"}}
+	err := crawl.APIError{StatusCode: http.StatusForbidden, Detail: &crawl.Problem{Code: "REQS008", Detail: "Crawl is not enabled for this account."}}
 	want := "zenrows crawl api request failed with status 403: Crawl is not enabled for this account (REQS008)"
 	if err.Error() != want {
 		t.Fatalf("got %q, want %q", err.Error(), want)

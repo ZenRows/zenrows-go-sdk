@@ -81,7 +81,7 @@ func crawlPath(crawlID string) string {
 
 // Create starts a crawl and returns it at once, with StatusRunning. Poll it with Wait or Get.
 //
-// When the account already runs as many crawls and Batch jobs as it may, Create returns an
+// When the account has too many crawls running, Create returns an
 // APIError with StatusCode 429 and Code() CodeTooManyCrawls; nothing is created, and
 // APIError.RetryAfter says when to retry. The create is retried on transient failures only
 // when params.IdempotencyKey is set.
