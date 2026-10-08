@@ -27,6 +27,7 @@ jobs:
         include:
           - { name: "api", path: "service/api" }
           - { name: "batch", path: "service/batch" }
+          - { name: "crawl", path: "service/crawl" }
     steps:
       - name: "Fetch source code"
         uses: actions/checkout@v4

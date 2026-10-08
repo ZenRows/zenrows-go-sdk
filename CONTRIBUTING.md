@@ -51,6 +51,28 @@ Run the test suite using:
 go test ./...
 ```
 
+Each service under `service/` is its own Go module: run the command from that service's directory.
+
+### Running the Crawl end-to-end test
+
+`service/crawl` has an end-to-end test that runs a real crawl (of
+`https://www.scrapingcourse.com/ecommerce/`, a few pages) against a live API. It is built only with
+the `integration` tag, and skips unless both variables below are set, so `go test ./...` never runs it.
+
+- `ZENROWS_API_KEY`: a key with Crawl access. Each run spends a few requests on its account.
+- `ZENROWS_CRAWL_BASE_URL`: the API base, `https://api.zenrows.com/v1` for production. Point it at
+  a local or staging deployment to test against that instead.
+
+```bash
+cd service/crawl
+export ZENROWS_API_KEY=...            # read it from your secret store; keep it out of shell history
+export ZENROWS_CRAWL_BASE_URL=https://api.zenrows.com/v1
+make test-e2e                         # go test -tags integration -count=1 -run E2E -v -timeout 20m ./...
+```
+
+An account runs at most a few crawls and Batch jobs at once; when it is at that limit, the test
+waits and retries the create for up to 5 minutes before it fails.
+
 ### Code of Conduct
 
 This project adheres to the Contributor Covenant [code of conduct](./CODE_OF_CONDUCT.md). By participating, you are 
