@@ -3,8 +3,6 @@
 This is the Go SDK for the Zenrows Crawl API. Give it one start URL, and it follows the links
 behind it and returns the URLs it keeps — optionally with each page's HTML.
 
-Crawl is in beta. This release supports link discovery with URL-only or HTML output.
-
 ## Model
 
 A **crawl** is one run from one start URL. It walks up to `Depth` link hops, keeps the URLs that
@@ -101,8 +99,8 @@ jittered exponential backoff honoring `Retry-After`; `Create` is retried only wh
   stable problem code, or `"internal"` if the body wasn't parseable. Codes worth branching on:
   - `CodeNotEnabled` (`REQS008`, 403): Crawl is not enabled for this account. `.NotEnabled()`
     reports it, and the error message says so.
-  - `CodeTooManyCrawls` (`too_many_crawls`, 429): the account already runs as many crawls and Batch
-    jobs as it may at once. Nothing was created; retry after `APIError.RetryAfter`.
+  - `CodeTooManyCrawls` (`too_many_crawls`, 429): the account has too many crawls running. Nothing
+    was created; retry after `APIError.RetryAfter`.
   - `CodeCrawlNotFound` / `CodeContentNotFound` (404), `CodeInvalidParameter` /
     `CodeInvalidStartURL` (422).
 - `WaiterTimeoutError`: `Wait` timed out.

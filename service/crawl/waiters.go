@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Wait defaults, the same as the batch package's WaitForRun.
+// Wait defaults.
 const (
 	defaultWaitTimeout         = 300 * time.Second
 	defaultWaitPollInterval    = 2 * time.Second

@@ -11,8 +11,7 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-// Retry tuning: ~250ms * 2^attempt, +/-20% jitter, capped at 10s. Same as the batch package's
-// transport, so behavior is consistent across the SDK's services.
+// Retry tuning: ~250ms * 2^attempt, +/-20% jitter, capped at 10s.
 const (
 	backoffBaseMs = 250
 	backoffCapMs  = 10_000

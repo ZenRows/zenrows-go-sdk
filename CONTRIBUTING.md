@@ -70,8 +70,8 @@ export ZENROWS_CRAWL_BASE_URL=https://api.zenrows.com/v1
 make test-e2e                         # go test -tags integration -count=1 -run E2E -v -timeout 20m ./...
 ```
 
-An account runs at most a few crawls and Batch jobs at once; when it is at that limit, the test
-waits and retries the create for up to 5 minutes before it fails.
+When the account has too many crawls running, the test waits for `Retry-After` and retries the
+create for up to 5 minutes before it fails.
 
 ### Code of Conduct
 

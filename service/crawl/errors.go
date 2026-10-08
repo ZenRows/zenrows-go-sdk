@@ -11,8 +11,8 @@ import (
 const (
 	// CodeNotEnabled (403) means Crawl is not enabled for this account.
 	CodeNotEnabled = "REQS008"
-	// CodeTooManyCrawls (429) means the account already runs as many crawls and Batch jobs as it
-	// may at once (3 by default). Retry after APIError.RetryAfter.
+	// CodeTooManyCrawls (429) means the account has too many crawls running. Retry after
+	// APIError.RetryAfter.
 	CodeTooManyCrawls = "too_many_crawls"
 	// CodeCrawlNotFound (404) means no crawl with this id exists for the account.
 	CodeCrawlNotFound = "crawl_not_found"
