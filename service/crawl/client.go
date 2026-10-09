@@ -2,7 +2,8 @@
 // links behind it and returns the URLs it keeps — optionally with each page's HTML. A crawl
 // stays on the start URL's registrable domain; subdomains count.
 //
-// Crawl is in Beta: this package is v0, and its API can change before v1.
+// Crawl is still evolving: new features are coming, limits may be tuned, and the changelog
+// announces each change. This package is v0, and its API can change before v1.
 //
 // A crawl is a long-running job: Create starts it and returns at once, while it runs. Wait
 // blocks until it ends; Get reads its status, coverage and one page of results; Results

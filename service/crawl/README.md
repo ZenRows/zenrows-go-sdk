@@ -1,9 +1,10 @@
-# Zenrows Crawl API Go SDK (beta)
+# Zenrows Crawl API Go SDK (new)
 
 This is the Go SDK for the Zenrows Crawl API. Give it one start URL, and it follows the links
 behind it and returns the URLs it keeps — optionally with each page's HTML.
 
-Crawl is in Beta. This module is v0 (`service/crawl/v0.x`), so its API can change before v1.
+Crawl is still evolving: new features are coming, limits may be tuned, and the changelog announces each change.
+This module is v0 (`service/crawl/v0.x`), so its API can change before v1.
 
 ## Model
 
