@@ -256,7 +256,8 @@ func TestDownloadStreamsLines(t *testing.T) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("X-Crawl-Status", "running")
 		_, _ = io.WriteString(w, `{"url":"u1","content_status":"fetched","content":"<p>1</p>"}`+"\n"+
-			`{"url":"u2","content_status":"pending"}`+"\n")
+			`{"url":"u2","content_status":"pending"}`+"\n"+
+			`{"url":"u3","content_status":"fetched","content":{"title":"t"}}`+"\n")
 	})
 
 	dl, err := client.Download(context.Background(), testCrawlID)
@@ -267,15 +268,16 @@ func TestDownloadStreamsLines(t *testing.T) {
 	if dl.Status != crawl.StatusRunning {
 		t.Fatalf("status = %q", dl.Status)
 	}
-	lines := make([]crawl.DownloadLine, 0, 2)
+	lines := make([]crawl.DownloadLine, 0, 3)
 	for line, err := range dl.Lines() {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		lines = append(lines, line)
 	}
-	if len(lines) != 2 || lines[0].HTML() != "<p>1</p>" || lines[1].HTML() != "" ||
-		lines[1].ContentStatus != crawl.ContentStatusPending {
+	if len(lines) != 3 || lines[0].HTML() != "<p>1</p>" || lines[1].HTML() != "" ||
+		lines[1].ContentStatus != crawl.ContentStatusPending ||
+		string(lines[2].Content) != `{"title":"t"}` || lines[2].HTML() != "" {
 		t.Fatalf("lines = %+v", lines)
 	}
 }
@@ -342,11 +344,25 @@ func TestAPIErrorWithoutProblemBody(t *testing.T) {
 
 	_, err := client.Get(context.Background(), testCrawlID, crawl.GetOptions{})
 	var apiErr crawl.APIError
-	if !errors.As(err, &apiErr) || apiErr.Code() != "internal" || apiErr.Detail != nil {
+	if !errors.As(err, &apiErr) || apiErr.Code() != "" || apiErr.Detail != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if err.Error() != "zenrows crawl api request failed with status 502" {
 		t.Fatalf("message = %q", err.Error())
+	}
+}
+
+func TestProblemWithoutCodeHasEmptyCode(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"title":"t","status":500}`)
+	})
+
+	_, err := client.Get(context.Background(), testCrawlID, crawl.GetOptions{})
+	var apiErr crawl.APIError
+	if !errors.As(err, &apiErr) || apiErr.Detail == nil || apiErr.Code() != "" {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -369,19 +385,42 @@ func TestGetRetriesTransientFailures(t *testing.T) {
 	}
 }
 
-func TestCreateWithoutIdempotencyKeyIsNotRetried(t *testing.T) {
+func TestCreateNeverRetriesTooManyCrawls(t *testing.T) {
+	for _, key := range []string{"", "k1"} {
+		var calls atomic.Int32
+		client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			w.Header().Set("Retry-After", "0")
+			writeProblem(w, http.StatusTooManyRequests, crawl.CodeTooManyCrawls)
+		})
+
+		params := crawl.CreateParams{URL: "https://example.com/", Depth: 1, IdempotencyKey: key}
+		if _, err := client.Create(context.Background(), params); err == nil {
+			t.Fatalf("key %q: expected an error", key)
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("key %q: calls = %d, want 1", key, calls.Load())
+		}
+	}
+}
+
+func TestCreateWithIdempotencyKeyRetriesTransientFailures(t *testing.T) {
 	var calls atomic.Int32
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.Header().Set("Retry-After", "0")
-		writeProblem(w, http.StatusTooManyRequests, crawl.CodeTooManyCrawls)
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, `{"crawl_id":"c_123","status":"running"}`)
 	})
 
-	if _, err := client.Create(context.Background(), crawl.CreateParams{URL: "https://example.com/", Depth: 1}); err == nil {
-		t.Fatal("expected an error")
+	params := crawl.CreateParams{URL: "https://example.com/", Depth: 1, IdempotencyKey: "k1"}
+	if _, err := client.Create(context.Background(), params); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("calls = %d, want 1", calls.Load())
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d, want 2", calls.Load())
 	}
 }
 
@@ -419,6 +458,36 @@ func TestWaitTimesOut(t *testing.T) {
 	var timeout crawl.WaiterTimeoutError
 	if !errors.As(err, &timeout) || timeout.Timeout != 30*time.Millisecond {
 		t.Fatalf("err = %v (%T)", err, err)
+	}
+}
+
+func TestWaitBoundsAHungPollByItsTimeout(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+
+	start := time.Now()
+	_, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{Timeout: 50 * time.Millisecond})
+	var timeout crawl.WaiterTimeoutError
+	if !errors.As(err, &timeout) {
+		t.Fatalf("err = %v (%T)", err, err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Wait returned after %s, want about 50ms", elapsed)
+	}
+}
+
+func TestWaitReturnsCallerCancellation(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := client.Wait(ctx, testCrawlID, crawl.WaitOptions{Timeout: time.Minute})
+	var timeout crawl.WaiterTimeoutError
+	if errors.As(err, &timeout) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v (%T), want the caller's context.DeadlineExceeded", err, err)
 	}
 }
 
