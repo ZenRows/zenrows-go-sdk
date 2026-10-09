@@ -142,7 +142,7 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
 - String enums on responses (`Status`, `StopReason`, `RunErrorCode`, `ContentStatus`) are
   extensible: the server may return values this SDK has no constant for. They decode without
   error, so always handle a default case; each type's `IsKnown()` reports whether a value is one
-  this SDK version defines. `Status.IsTerminal()` treats every status but `StatusRunning` as ended.
+  this SDK version defines.
 
 ## Running the end-to-end test
 

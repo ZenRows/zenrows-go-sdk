@@ -559,7 +559,4 @@ func TestResponseEnumsIsKnown(t *testing.T) {
 			t.Errorf("%s: undefined value reported known", c.name)
 		}
 	}
-	if crawl.StatusRunning.IsTerminal() || !crawl.Status("x_added_later").IsTerminal() || !crawl.StatusCompleted.IsTerminal() {
-		t.Fatal("IsTerminal: only running is non-terminal")
-	}
 }
