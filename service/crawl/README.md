@@ -49,7 +49,8 @@ func main() {
         log.Fatal(err)
     }
 
-    // Block until the crawl ends (default timeout 600s; the crawl keeps running on timeout).
+    // Block until the crawl ends, or until the timeout (default 600s) runs out. On timeout the
+    // crawl is returned still running, without an error.
     done, err := client.Wait(ctx, created.CrawlID, crawl.WaitOptions{})
     if err != nil {
         log.Fatal(err)
@@ -57,12 +58,12 @@ func main() {
     fmt.Println(done.Status, done.Coverage.ItemsFound)
 
     // Every kept URL, auto-paginated.
-    for result, err := range client.IterResults(ctx, created.CrawlID, crawl.GetOptions{}) {
+    for result, err := range client.Results(ctx, created.CrawlID, crawl.ResultsOptions{}) {
         if err != nil {
             log.Fatal(err)
         }
         if result.ContentStatus == crawl.ContentStatusFetched {
-            html, err := client.GetContent(ctx, created.CrawlID, result.ContentID())
+            html, err := client.Content(ctx, created.CrawlID, result.ContentID())
             if err != nil {
                 log.Fatal(err)
             }
@@ -88,10 +89,13 @@ func main() {
 ## Client Initialization
 
 Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment variable, and optionally
-`WithBaseURL` (defaults to `https://api.zenrows.com/v1`) and `WithRetries` (defaults to 3 —
-transient failures, 429/502/503/504 and network errors, are retried on idempotent requests with
-jittered exponential backoff honoring `Retry-After`; `Create` is retried only when
-`CreateParams.IdempotencyKey` is set, and never on a 429).
+`WithBaseURL` (defaults to `https://api.zenrows.com/v1`), `WithTimeout` and `WithRetries`.
+
+- `WithTimeout` (defaults to 30s) bounds each HTTP request. For `Download` it bounds the wait for
+  the response headers, not the reading of the stream. A request that runs out is a network error.
+- `WithRetries` (defaults to 3): transient failures, 429/502/503/504 and network errors, are
+  retried on idempotent requests with jittered exponential backoff honoring `Retry-After`.
+  `Create` is retried only when `CreateParams.IdempotencyKey` is set, and never on a 429.
 
 ## Methods
 
@@ -99,15 +103,17 @@ jittered exponential backoff honoring `Retry-After`; `Create` is retried only wh
 - `Get(ctx, crawlID, GetOptions)` reads the crawl and one page of results. `NextCursor` is never
   nil while the crawl runs (polling with it returns only new URLs) and nil once the crawl has
   ended and the last page was read.
-- `IterResults(ctx, crawlID, GetOptions)` yields every result, following `NextCursor` until it is
-  nil. Call it after `Wait`: on a running crawl it yields what was kept so far and stops.
-- `Wait(ctx, crawlID, WaitOptions)` polls until the crawl ends (2s, x1.5 per poll, capped at 15s;
-  timeout 600s). Every poll shares the timeout, so `Wait` returns by then. On timeout it returns
-  `WaiterTimeoutError` without stopping the crawl.
-- `List(ctx, ListOptions)` / `IterCrawls(ctx, ListOptions)` list the account's crawls, newest first.
+- `Results(ctx, crawlID, ResultsOptions)` yields every result, following `NextCursor` until it is
+  nil. `ResultsOptions.Limit` is the page size of each request. Call it after `Wait`: on a running
+  crawl it yields what was kept so far and stops at the first empty page.
+- `Wait(ctx, crawlID, WaitOptions)` polls until the crawl ends (2s, x1.5 per poll, capped at 15s)
+  or `WaitOptions.Timeout` (default 600s) runs out. On timeout it returns the crawl, still
+  `StatusRunning`, without an error, and does not stop it. A failed crawl is returned, not an error.
+- `List(ctx, ListOptions)` reads one page of the account's crawls, newest first. Pass
+  `NextCursor` as `ListOptions.Cursor` for the next page; it is empty on the last page.
 - `Stop(ctx, crawlID)` stops a running crawl; on a crawl that already ended it returns the crawl
   as it ended.
-- `GetContent(ctx, crawlID, contentID)` returns one kept URL's page (`Result.ContentID()`).
+- `Content(ctx, crawlID, contentID)` returns one kept URL's page (`Result.ContentID()`).
 - `Download(ctx, crawlID)` streams every result as NDJSON; `Download.Status` is `StatusRunning`
   when the crawl had not ended yet, so the file is partial. `DownloadLine.Content` holds the raw
   JSON content; `HTML()` decodes it for `OutputFormatHTML`.
@@ -115,6 +121,8 @@ jittered exponential backoff honoring `Retry-After`; `Create` is retried only wh
 ## Error Handling
 
 - `NotConfiguredError`: the client is missing an API key.
+- A request that gets no response within the `WithTimeout` value fails with an error for which
+  `errors.Is(err, context.DeadlineExceeded)` is true.
 - `APIError`: a non-2xx response. `StatusCode` carries the HTTP status; `Detail` carries the parsed
   RFC 9457 Problem JSON body when the response could be decoded as such; `.Code()` returns the
   stable problem code, or `""` if the body has none. The codes:
@@ -130,7 +138,6 @@ jittered exponential backoff honoring `Retry-After`; `Create` is retried only wh
   - `CodeTooManyCrawls` (`too_many_crawls`, 429): the account has reached its limit of active
     jobs (3 by default), shared with its Batch jobs. Nothing was created; retry after
     `APIError.RetryAfter`. `Create` does not retry it.
-- `WaiterTimeoutError`: `Wait` timed out.
 - String enums on responses (`Status`, `StopReason`, `RunErrorCode`, `ContentStatus`) are
   extensible: the server may return values this SDK has no constant for. They decode without
   error, so always handle a default case; each type's `IsKnown()` reports whether a value is one

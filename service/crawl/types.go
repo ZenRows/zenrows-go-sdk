@@ -176,7 +176,7 @@ type Result struct {
 	// ContentStatus is present only when the crawl has an OutputFormat.
 	ContentStatus ContentStatus `json:"content_status,omitempty"`
 	// ContentURL is the page's API path (e.g. "/v1/crawls/c_x/contents/ct_y"), present only
-	// when ContentStatus is ContentStatusFetched. Read it with Client.GetContent(ctx, crawlID,
+	// when ContentStatus is ContentStatusFetched. Read it with Client.Content(ctx, crawlID,
 	// result.ContentID()).
 	ContentURL string `json:"content_url,omitempty"`
 }
@@ -190,11 +190,17 @@ func (r Result) ContentID() string {
 	return r.ContentURL[strings.LastIndex(r.ContentURL, "/")+1:]
 }
 
-// GetOptions pages a crawl's results in Client.Get and Client.IterResults.
+// GetOptions pages a crawl's results in Client.Get.
 type GetOptions struct {
 	// Cursor is the NextCursor from the previous read. Leave empty to start from the first result.
 	Cursor string
 	// Limit is how many results to return, 1 to 10,000 (API default 1,000).
+	Limit int
+}
+
+// ResultsOptions configures Client.Results.
+type ResultsOptions struct {
+	// Limit is how many results each request reads, 1 to 10,000 (API default 1,000).
 	Limit int
 }
 
@@ -207,7 +213,7 @@ type CrawlWithResults struct {
 	NextCursor *string `json:"next_cursor"`
 }
 
-// ListOptions paginates Client.List and Client.IterCrawls.
+// ListOptions pages Client.List.
 type ListOptions struct {
 	// Cursor is the NextCursor from the previous page. Leave empty for the newest crawls.
 	Cursor string
