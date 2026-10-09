@@ -5,7 +5,7 @@ import "os"
 const defaultBaseURL = "https://api.zenrows.com/v1"
 
 // defaultRetries bounds automatic retries of transient failures (HTTP 429/502/503/504 and
-// network errors) on idempotent requests. Retries use jittered exponential backoff and honor
+// network errors) on idempotent requests. Create never retries a 429. Retries use jittered exponential backoff and honor
 // Retry-After; set WithRetries(0) to disable.
 const defaultRetries = 3
 
@@ -47,7 +47,8 @@ func WithAPIKey(apiKey string) Option {
 }
 
 // WithRetries configures how many times a transient failure (429/502/503/504, or a network
-// error) is retried on idempotent requests. Defaults to 3; pass 0 to disable.
+// error) is retried on idempotent requests. Create never retries a 429. Defaults to 3; pass 0
+// to disable.
 func WithRetries(retries int) Option {
 	return &funcOption{f: func(o *options) {
 		if retries < 0 {

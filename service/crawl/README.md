@@ -1,7 +1,9 @@
-# Zenrows Crawl API Go SDK
+# Zenrows Crawl API Go SDK (beta)
 
 This is the Go SDK for the Zenrows Crawl API. Give it one start URL, and it follows the links
 behind it and returns the URLs it keeps — optionally with each page's HTML.
+
+Crawl is in Beta. This module is v0 (`service/crawl/v0.x`), so its API can change before v1.
 
 ## Model
 
@@ -10,7 +12,7 @@ match `IncludePatterns` (and none of `ExcludePatterns`), and stops at `MaxItems`
 `MaxPages` fetched pages. It runs asynchronously: `Create` returns at once with
 `StatusRunning`, and the crawl ends `StatusCompleted`, `StatusStopped` (you called `Stop`) or
 `StatusFailed` (`Crawl.Error` says why). With `OutputFormat: crawl.OutputFormatHTML`, each kept
-URL's page is fetched too.
+URL's page is fetched too. A crawl stays on the start URL's registrable domain; subdomains count.
 
 ## Installation
 
@@ -21,48 +23,65 @@ go get github.com/zenrows/zenrows-go-sdk/service/crawl
 ## Usage
 
 ```go
+package main
+
 import (
     "context"
     "fmt"
+    "log"
 
     "github.com/zenrows/zenrows-go-sdk/service/crawl"
 )
 
-client := crawl.NewClient(crawl.WithAPIKey("YOUR_API_KEY"))
-ctx := context.Background()
+func main() {
+    client := crawl.NewClient(crawl.WithAPIKey("YOUR_API_KEY"))
+    ctx := context.Background()
 
-created, err := client.Create(ctx, crawl.CreateParams{
-    URL:             "https://example.com/products/",
-    Depth:           1,
-    MaxItems:        20,
-    MaxPages:        30,
-    IncludePatterns: []string{"/product/"},
-    OutputFormat:    crawl.OutputFormatHTML, // omit for URLs only
-})
-
-// Block until the crawl ends (default timeout 300s; the crawl keeps running on timeout).
-done, err := client.Wait(ctx, created.CrawlID, crawl.WaitOptions{})
-fmt.Println(done.Status, done.Coverage.ItemsFound)
-
-// Every kept URL, auto-paginated.
-for result, err := range client.IterResults(ctx, created.CrawlID, crawl.GetOptions{}) {
+    created, err := client.Create(ctx, crawl.CreateParams{
+        URL:             "https://example.com/products/",
+        Depth:           1,
+        MaxItems:        20,
+        MaxPages:        30,
+        IncludePatterns: []string{"/product/"},
+        OutputFormat:    crawl.OutputFormatHTML, // omit for URLs only
+    })
     if err != nil {
-        break
+        log.Fatal(err)
     }
-    if result.ContentStatus == crawl.ContentStatusFetched {
-        html, err := client.GetContent(ctx, created.CrawlID, result.ContentID())
-        _, _ = html, err
-    }
-}
 
-// Or everything in one NDJSON stream, pages included.
-dl, err := client.Download(ctx, created.CrawlID)
-defer dl.Close()
-for line, err := range dl.Lines() {
+    // Block until the crawl ends (default timeout 600s; the crawl keeps running on timeout).
+    done, err := client.Wait(ctx, created.CrawlID, crawl.WaitOptions{})
     if err != nil {
-        break
+        log.Fatal(err)
     }
-    fmt.Println(line.URL, len(line.HTML()))
+    fmt.Println(done.Status, done.Coverage.ItemsFound)
+
+    // Every kept URL, auto-paginated.
+    for result, err := range client.IterResults(ctx, created.CrawlID, crawl.GetOptions{}) {
+        if err != nil {
+            log.Fatal(err)
+        }
+        if result.ContentStatus == crawl.ContentStatusFetched {
+            html, err := client.GetContent(ctx, created.CrawlID, result.ContentID())
+            if err != nil {
+                log.Fatal(err)
+            }
+            fmt.Println(result.URL, len(html))
+        }
+    }
+
+    // Or everything in one NDJSON stream, pages included.
+    dl, err := client.Download(ctx, created.CrawlID)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer dl.Close()
+    for line, err := range dl.Lines() {
+        if err != nil {
+            log.Fatal(err)
+        }
+        fmt.Println(line.URL, len(line.HTML()))
+    }
 }
 ```
 
@@ -72,7 +91,7 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
 `WithBaseURL` (defaults to `https://api.zenrows.com/v1`) and `WithRetries` (defaults to 3 —
 transient failures, 429/502/503/504 and network errors, are retried on idempotent requests with
 jittered exponential backoff honoring `Retry-After`; `Create` is retried only when
-`CreateParams.IdempotencyKey` is set).
+`CreateParams.IdempotencyKey` is set, and never on a 429).
 
 ## Methods
 
@@ -83,26 +102,34 @@ jittered exponential backoff honoring `Retry-After`; `Create` is retried only wh
 - `IterResults(ctx, crawlID, GetOptions)` yields every result, following `NextCursor` until it is
   nil. Call it after `Wait`: on a running crawl it yields what was kept so far and stops.
 - `Wait(ctx, crawlID, WaitOptions)` polls until the crawl ends (2s, x1.5 per poll, capped at 15s;
-  timeout 300s) and returns `WaiterTimeoutError` on timeout without stopping the crawl.
+  timeout 600s). Every poll shares the timeout, so `Wait` returns by then. On timeout it returns
+  `WaiterTimeoutError` without stopping the crawl.
 - `List(ctx, ListOptions)` / `IterCrawls(ctx, ListOptions)` list the account's crawls, newest first.
 - `Stop(ctx, crawlID)` stops a running crawl; on a crawl that already ended it returns the crawl
   as it ended.
 - `GetContent(ctx, crawlID, contentID)` returns one kept URL's page (`Result.ContentID()`).
 - `Download(ctx, crawlID)` streams every result as NDJSON; `Download.Status` is `StatusRunning`
-  when the crawl had not ended yet, so the file is partial.
+  when the crawl had not ended yet, so the file is partial. `DownloadLine.Content` holds the raw
+  JSON content; `HTML()` decodes it for `OutputFormatHTML`.
 
 ## Error Handling
 
 - `NotConfiguredError`: the client is missing an API key.
 - `APIError`: a non-2xx response. `StatusCode` carries the HTTP status; `Detail` carries the parsed
   RFC 9457 Problem JSON body when the response could be decoded as such; `.Code()` returns the
-  stable problem code, or `"internal"` if the body wasn't parseable. Codes worth branching on:
+  stable problem code, or `""` if the body has none. The codes:
   - `CodeNotEnabled` (`REQS008`, 403): Crawl is not enabled for this account. `.NotEnabled()`
     reports it, and the error message says so.
-  - `CodeTooManyCrawls` (`too_many_crawls`, 429): the account has too many crawls running. Nothing
-    was created; retry after `APIError.RetryAfter`.
-  - `CodeCrawlNotFound` / `CodeContentNotFound` (404), `CodeInvalidParameter` /
-    `CodeInvalidStartURL` (422).
+  - 400 `invalid_request`, `unknown_parameter` or `invalid_cursor`: fix the request.
+  - `CodeCrawlNotFound` / `CodeContentNotFound` (404).
+  - 409 `idempotency_request_in_flight`: a create with the same `IdempotencyKey` is still in
+    progress. Retry after it ends.
+  - 422 `CodeInvalidParameter`, `CodeInvalidStartURL`, `domain_not_allowed` or
+    `idempotency_key_reused`: do not retry as is. For `idempotency_key_reused`, use a new key or
+    no key.
+  - `CodeTooManyCrawls` (`too_many_crawls`, 429): the account has reached its limit of active
+    jobs (3 by default), shared with its Batch jobs. Nothing was created; retry after
+    `APIError.RetryAfter`. `Create` does not retry it.
 - `WaiterTimeoutError`: `Wait` timed out.
 - String enums on responses (`Status`, `StopReason`, `RunErrorCode`, `ContentStatus`) are
   extensible: the server may return values this SDK has no constant for. They decode without

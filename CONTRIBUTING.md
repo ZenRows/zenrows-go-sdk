@@ -75,8 +75,8 @@ export ZENROWS_E2E_CRAWL_INCLUDE=/product/
 make test-e2e                         # go test -tags integration -count=1 -run E2E -v -timeout 20m ./...
 ```
 
-When the account has too many crawls running, the test waits for `Retry-After` and retries the
-create for up to 5 minutes before it fails.
+When the account has reached its limit of active jobs (3 by default, shared with its Batch jobs),
+the test waits for `Retry-After` and retries the create for up to 5 minutes before it fails.
 
 ### Code of Conduct
 

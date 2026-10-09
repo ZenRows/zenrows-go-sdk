@@ -34,8 +34,8 @@ func e2eSetup(t *testing.T) (client *crawl.Client, startURL, include string) {
 	return crawl.NewClient(crawl.WithBaseURL(baseURL)), startURL, os.Getenv("ZENROWS_E2E_CRAWL_INCLUDE")
 }
 
-// createWithSlot creates the crawl, waiting out 429 too_many_crawls: other runs on the same
-// account share its active-crawl slots.
+// createWithSlot creates the crawl, waiting out 429 too_many_crawls: other crawls and Batch
+// jobs on the same account share its active job slots.
 func createWithSlot(ctx context.Context, t *testing.T, client *crawl.Client, params crawl.CreateParams) *crawl.Crawl {
 	t.Helper()
 	deadline := time.Now().Add(e2eCreateBudget)

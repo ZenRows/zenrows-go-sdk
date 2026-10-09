@@ -30,6 +30,15 @@ var idempotentMethods = map[string]bool{
 	http.MethodHead: true, http.MethodOptions: true,
 }
 
+// isRetryableStatus reports whether a response status is transient. A 429 on POST is
+// too_many_crawls: the slot frees only when one of the account's jobs ends, so it is not retried.
+func isRetryableStatus(method string, status int) bool {
+	if status == http.StatusTooManyRequests && method == http.MethodPost {
+		return false
+	}
+	return retryableStatuses[status]
+}
+
 func hasIdempotencyKey(req *resty.Request) bool {
 	for k := range req.Header {
 		if http.CanonicalHeaderKey(k) == "Idempotency-Key" {
@@ -64,9 +73,9 @@ func parseRetryAfter(raw string) (time.Duration, bool) {
 	return time.Duration(secs * float64(time.Second)), true
 }
 
-// executeWithRetry sends req via method+path, retrying transient failures (429/502/503/504,
-// or a network error) up to maxRetries times with jittered exponential backoff (honoring
-// Retry-After when present). Only idempotent requests are replayed: GET/PUT/DELETE/HEAD/
+// executeWithRetry sends req via method+path, retrying transient failures (429 except on
+// POST, 502/503/504, or a network error) up to maxRetries times with jittered exponential
+// backoff (honoring Retry-After when present). Only idempotent requests are replayed: GET/PUT/DELETE/HEAD/
 // OPTIONS, plus POST when the caller supplied an Idempotency-Key header. Context
 // cancellation/timeout is never retried — the caller set that budget.
 func executeWithRetry(ctx context.Context, req *resty.Request, method, path string, maxRetries int) (*resty.Response, error) {
@@ -89,7 +98,7 @@ func executeWithRetry(ctx context.Context, req *resty.Request, method, path stri
 			return res, err
 		}
 
-		if idempotent && attempt < maxRetries && retryableStatuses[res.StatusCode()] {
+		if idempotent && attempt < maxRetries && isRetryableStatus(method, res.StatusCode()) {
 			closeRawBody(res)
 			wait, ok := retryAfterDuration(res)
 			if !ok {
