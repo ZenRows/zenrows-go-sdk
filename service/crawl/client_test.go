@@ -229,6 +229,89 @@ func TestStop(t *testing.T) {
 	}
 }
 
+func writeCrawlBusy(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	writeProblem(w, http.StatusServiceUnavailable, "crawl_busy")
+}
+
+func TestStopRetriesCrawlBusyAfterRetryAfter(t *testing.T) {
+	var calls atomic.Int32
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			writeCrawlBusy(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, `{"crawl_id":"c_123","status":"stopped","stop_reason":"user"}`)
+	}, crawl.WithRetries(2))
+
+	start := time.Now()
+	got, err := client.Stop(context.Background(), testCrawlID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != crawl.StatusStopped {
+		t.Fatalf("stop = %+v", got)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d, want 2", calls.Load())
+	}
+	if elapsed := time.Since(start); elapsed < time.Second {
+		t.Fatalf("retried after %s, want Retry-After's 1s", elapsed)
+	}
+}
+
+func TestStopReturnsCrawlBusyAfterRetries(t *testing.T) {
+	var calls atomic.Int32
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		writeCrawlBusy(w)
+	}, crawl.WithRetries(2))
+
+	_, err := client.Stop(context.Background(), testCrawlID)
+	var apiErr crawl.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable || apiErr.Code() != "crawl_busy" {
+		t.Fatalf("err = %v, want a 503 crawl_busy APIError", err)
+	}
+	if apiErr.RetryAfter != time.Second {
+		t.Fatalf("RetryAfter = %s, want 1s", apiErr.RetryAfter)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("calls = %d, want 3", calls.Load())
+	}
+}
+
+func TestStopDoesNotRetryOther503(t *testing.T) {
+	var calls atomic.Int32
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Retry-After", "0")
+		writeProblem(w, http.StatusServiceUnavailable, "internal_error")
+	}, crawl.WithRetries(2))
+
+	if _, err := client.Stop(context.Background(), testCrawlID); err == nil {
+		t.Fatal("expected an error")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestStopReturnsCallerDeadlineWhileWaitingOnCrawlBusy(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeCrawlBusy(w)
+	}, crawl.WithRetries(2))
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	if _, err := client.Stop(ctx, testCrawlID); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Fatalf("Stop returned after %s, want it to stop waiting at the deadline", elapsed)
+	}
+}
+
 func TestContentReturnsRawBody(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/crawls/c_123/contents/ct_a" {
