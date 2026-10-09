@@ -29,12 +29,6 @@ func (s Status) IsKnown() bool {
 	}
 }
 
-// IsTerminal reports whether a crawl in status s has ended: any status but StatusRunning,
-// including values this SDK version does not define.
-func (s Status) IsTerminal() bool {
-	return s != "" && s != StatusRunning
-}
-
 // StopReason is what ended a crawl before nothing was left to open. Absent when nothing was
 // left, and on a failed crawl.
 // The server may add values not listed here, and they decode as-is; callers must handle

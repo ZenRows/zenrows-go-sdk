@@ -49,7 +49,7 @@ func (c *Client) Wait(ctx context.Context, crawlID string, opts WaitOptions) (*C
 		return &page.Crawl, nil
 	}
 
-	for interval := waitPollInterval; !page.Status.IsTerminal(); {
+	for interval := waitPollInterval; page.Status == StatusRunning; {
 		jitterFactor := 1.0 + (rand.Float64()*2-1)*waitJitter //nolint:gosec // timing jitter, not security-sensitive
 		if !sleepCtx(waitCtx, time.Duration(float64(interval)*jitterFactor)) {
 			return ended()
