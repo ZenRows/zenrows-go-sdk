@@ -42,7 +42,7 @@ func createWithSlot(ctx context.Context, t *testing.T, client *crawl.Client, par
 	for {
 		created, err := client.Create(ctx, params)
 		var apiErr crawl.APIError
-		if err == nil || !errors.As(err, &apiErr) || apiErr.Code() != crawl.CodeTooManyCrawls || time.Now().After(deadline) {
+		if err == nil || !errors.As(err, &apiErr) || apiErr.Code() != "too_many_crawls" || time.Now().After(deadline) {
 			if err != nil {
 				t.Fatalf("create: %v", err)
 			}
@@ -113,8 +113,8 @@ func TestE2ECrawl(t *testing.T) {
 
 	_, err = client.Get(ctx, "c_does_not_exist", crawl.GetOptions{})
 	var apiErr crawl.APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound || apiErr.Code() != crawl.CodeCrawlNotFound {
-		t.Fatalf("get unknown crawl: err = %v, want 404 %s", err, crawl.CodeCrawlNotFound)
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound || apiErr.Code() != "crawl_not_found" {
+		t.Fatalf("get unknown crawl: err = %v, want 404 crawl_not_found", err)
 	}
 	t.Logf("get unknown crawl: %d %s", apiErr.StatusCode, apiErr.Code())
 }
@@ -125,7 +125,7 @@ func checkContent(ctx context.Context, t *testing.T, client *crawl.Client, crawl
 		if r.ContentStatus != crawl.ContentStatusFetched {
 			continue
 		}
-		page, err := client.Content(ctx, crawlID, r.ContentID())
+		page, err := client.Content(ctx, crawlID, r.ContentURL)
 		if err != nil {
 			t.Fatalf("content of %s: %v", r.URL, err)
 		}

@@ -63,7 +63,7 @@ func main() {
             log.Fatal(err)
         }
         if result.ContentStatus == crawl.ContentStatusFetched {
-            html, err := client.Content(ctx, created.CrawlID, result.ContentID())
+            html, err := client.Content(ctx, created.CrawlID, result.ContentURL)
             if err != nil {
                 log.Fatal(err)
             }
@@ -113,7 +113,8 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
   `NextCursor` as `ListOptions.Cursor` for the next page; it is empty on the last page.
 - `Stop(ctx, crawlID)` stops a running crawl; on a crawl that already ended it returns the crawl
   as it ended.
-- `Content(ctx, crawlID, contentID)` returns one kept URL's page (`Result.ContentID()`).
+- `Content(ctx, crawlID, contentID)` returns one kept URL's page. `contentID` is a content id
+  or a `Result.ContentURL`.
 - `Download(ctx, crawlID)` streams every result as NDJSON; `Download.Status` is `StatusRunning`
   when the crawl had not ended yet, so the file is partial. `DownloadLine.Content` holds the raw
   JSON content; `HTML()` decodes it for `OutputFormatHTML`.
@@ -126,18 +127,18 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
 - `APIError`: a non-2xx response. `StatusCode` carries the HTTP status; `Detail` carries the parsed
   RFC 9457 Problem JSON body when the response could be decoded as such; `.Code()` returns the
   stable problem code, or `""` if the body has none. The codes:
-  - `CodeNotEnabled` (`REQS008`, 403): Crawl is not enabled for this account. `.NotEnabled()`
-    reports it, and the error message says so.
+  - `CodeNotEnabled` (`REQS008`, 403): Crawl is not enabled for this account. The error message
+    says so.
   - 400 `invalid_request`, `unknown_parameter` or `invalid_cursor`: fix the request.
-  - `CodeCrawlNotFound` / `CodeContentNotFound` (404).
+  - 404 `crawl_not_found` or `content_not_found`.
   - 409 `idempotency_request_in_flight`: a create with the same `IdempotencyKey` is still in
     progress. Retry after it ends.
-  - 422 `CodeInvalidParameter`, `CodeInvalidStartURL`, `domain_not_allowed` or
+  - 422 `invalid_parameter`, `invalid_start_url`, `domain_not_allowed` or
     `idempotency_key_reused`: do not retry as is. For `idempotency_key_reused`, use a new key or
     no key.
-  - `CodeTooManyCrawls` (`too_many_crawls`, 429): the account has reached its limit of active
-    jobs (3 by default), shared with its Batch jobs. Nothing was created; retry after
-    `APIError.RetryAfter`. `Create` does not retry it.
+  - 429 `too_many_crawls`: the account has reached its limit of active jobs (3 by default),
+    shared with its Batch jobs. Nothing was created; retry after `APIError.RetryAfter`. `Create`
+    does not retry it.
 - String enums on responses (`Status`, `StopReason`, `RunErrorCode`, `ContentStatus`) are
   extensible: the server may return values this SDK has no constant for. They decode without
   error, so always handle a default case; each type's `IsKnown()` reports whether a value is one

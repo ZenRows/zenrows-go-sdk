@@ -29,7 +29,7 @@ type WaitOptions struct {
 // crawl keeps running. A failed crawl is returned with its Error, not as a Go error. Wait reads
 // the crawl at least once, so it returns an error only when a read fails or ctx ends. Read the
 // results afterwards with Results.
-func (c *Client) Wait(ctx context.Context, crawlID string, opts WaitOptions) (Crawl, error) {
+func (c *Client) Wait(ctx context.Context, crawlID string, opts WaitOptions) (*Crawl, error) {
 	if opts.Timeout <= 0 {
 		opts.Timeout = defaultWaitTimeout
 	}
@@ -39,14 +39,14 @@ func (c *Client) Wait(ctx context.Context, crawlID string, opts WaitOptions) (Cr
 	// limit=1 keeps each poll cheap: only the crawl's status is needed here.
 	page, err := c.Get(ctx, crawlID, GetOptions{Limit: 1})
 	if err != nil {
-		return Crawl{}, err
+		return nil, err
 	}
 	// Called once waitCtx ends: the timeout returns the running crawl, a caller cancel its error.
-	ended := func() (Crawl, error) {
+	ended := func() (*Crawl, error) {
 		if err := ctx.Err(); err != nil {
-			return Crawl{}, err
+			return nil, err
 		}
-		return page.Crawl, nil
+		return &page.Crawl, nil
 	}
 
 	for interval := waitPollInterval; !page.Status.IsTerminal(); {
@@ -59,10 +59,10 @@ func (c *Client) Wait(ctx context.Context, crawlID string, opts WaitOptions) (Cr
 			if waitCtx.Err() != nil {
 				return ended()
 			}
-			return Crawl{}, err
+			return nil, err
 		}
 		page = next
 		interval = min(time.Duration(float64(interval)*waitBackoff), waitMaxPollInterval)
 	}
-	return page.Crawl, nil
+	return &page.Crawl, nil
 }

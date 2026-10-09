@@ -134,7 +134,7 @@ func TestGetParsesResultsAndForwardsPaging(t *testing.T) {
 	if got.Coverage.ItemsFound != 2 || got.DuplicatesRemoved != 1 || got.FinishedAt == "" {
 		t.Fatalf("crawl = %+v", got)
 	}
-	if len(got.Results) != 2 || got.Results[0].ContentID() != "ct_a" || got.Results[1].ContentID() != "" {
+	if len(got.Results) != 2 || got.Results[0].ContentURL != "/v1/crawls/c_123/contents/ct_a" || got.Results[1].ContentURL != "" {
 		t.Fatalf("results = %+v", got.Results)
 	}
 }
@@ -238,9 +238,11 @@ func TestContentReturnsRawBody(t *testing.T) {
 		_, _ = io.WriteString(w, "<html>a</html>")
 	})
 
-	got, err := client.Content(context.Background(), testCrawlID, "ct_a")
-	if err != nil || string(got) != "<html>a</html>" {
-		t.Fatalf("content = %q, err = %v", got, err)
+	for _, contentID := range []string{"ct_a", "/v1/crawls/c_123/contents/ct_a"} {
+		got, err := client.Content(context.Background(), testCrawlID, contentID)
+		if err != nil || string(got) != "<html>a</html>" {
+			t.Fatalf("%s: content = %q, err = %v", contentID, got, err)
+		}
 	}
 }
 
@@ -280,12 +282,12 @@ func TestDownloadStreamsLines(t *testing.T) {
 
 func TestDownloadError(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		writeProblem(w, http.StatusNotFound, crawl.CodeCrawlNotFound)
+		writeProblem(w, http.StatusNotFound, "crawl_not_found")
 	})
 
 	_, err := client.Download(context.Background(), testCrawlID)
 	var apiErr crawl.APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound || apiErr.Code() != crawl.CodeCrawlNotFound {
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound || apiErr.Code() != "crawl_not_found" {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -295,9 +297,9 @@ func TestErrorMapping(t *testing.T) {
 		status int
 		code   string
 	}{
-		{http.StatusNotFound, crawl.CodeCrawlNotFound},
-		{http.StatusUnprocessableEntity, crawl.CodeInvalidStartURL},
-		{http.StatusTooManyRequests, crawl.CodeTooManyCrawls},
+		{http.StatusNotFound, "crawl_not_found"},
+		{http.StatusUnprocessableEntity, "invalid_start_url"},
+		{http.StatusTooManyRequests, "too_many_crawls"},
 		{http.StatusForbidden, crawl.CodeNotEnabled},
 	}
 	for _, c := range cases {
@@ -318,14 +320,11 @@ func TestErrorMapping(t *testing.T) {
 		if c.status == http.StatusTooManyRequests && apiErr.RetryAfter != 30*time.Second {
 			t.Errorf("RetryAfter = %s, want 30s", apiErr.RetryAfter)
 		}
-		if apiErr.NotEnabled() != (c.code == crawl.CodeNotEnabled) {
-			t.Errorf("%s: NotEnabled() = %v", c.code, apiErr.NotEnabled())
-		}
 	}
 }
 
 func TestNotEnabledErrorMessage(t *testing.T) {
-	err := crawl.APIError{StatusCode: http.StatusForbidden, Detail: &crawl.Problem{Code: "REQS008", Detail: "Crawl is not enabled for this account."}}
+	err := crawl.APIError{StatusCode: http.StatusForbidden, Detail: &crawl.Problem{Code: crawl.CodeNotEnabled, Detail: "Crawl is not enabled for this account."}}
 	want := "zenrows crawl api request failed with status 403: Crawl is not enabled for this account (REQS008)"
 	if err.Error() != want {
 		t.Fatalf("got %q, want %q", err.Error(), want)
@@ -387,7 +386,7 @@ func TestCreateNeverRetriesTooManyCrawls(t *testing.T) {
 		client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
 			w.Header().Set("Retry-After", "0")
-			writeProblem(w, http.StatusTooManyRequests, crawl.CodeTooManyCrawls)
+			writeProblem(w, http.StatusTooManyRequests, "too_many_crawls")
 		})
 
 		params := crawl.CreateParams{URL: "https://example.com/", Depth: 1, IdempotencyKey: key}

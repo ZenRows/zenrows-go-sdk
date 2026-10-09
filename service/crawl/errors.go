@@ -7,23 +7,8 @@ import (
 	"time"
 )
 
-// Problem codes worth branching on. APIError.Code returns them; the server may return others.
-const (
-	// CodeNotEnabled (403) means Crawl is not enabled for this account.
-	CodeNotEnabled = "REQS008"
-	// CodeTooManyCrawls (429) means the account has reached its limit of active jobs (3 by
-	// default), shared with its Batch jobs. Retry after APIError.RetryAfter.
-	CodeTooManyCrawls = "too_many_crawls"
-	// CodeCrawlNotFound (404) means no crawl with this id exists for the account.
-	CodeCrawlNotFound = "crawl_not_found"
-	// CodeContentNotFound (404) means the page was not fetched, its fetch failed, or the crawl
-	// has no OutputFormat.
-	CodeContentNotFound = "content_not_found"
-	// CodeInvalidParameter (422) means a create value is out of range or not accepted.
-	CodeInvalidParameter = "invalid_parameter"
-	// CodeInvalidStartURL (422) means the start URL is not a public http or https URL.
-	CodeInvalidStartURL = "invalid_start_url"
-)
+// CodeNotEnabled is the problem code (403) for an account Crawl is not enabled for.
+const CodeNotEnabled = "REQS008"
 
 // NotConfiguredError results when the Crawl API client is used without a valid API key.
 type NotConfiguredError struct{}
@@ -71,7 +56,7 @@ type APIError struct {
 	StatusCode int
 	Detail     *Problem
 	Body       []byte
-	// RetryAfter is the response's Retry-After header (e.g. 30s on CodeTooManyCrawls), or 0.
+	// RetryAfter is the response's Retry-After header (e.g. 30s on a 429 too_many_crawls), or 0.
 	RetryAfter time.Duration
 }
 
@@ -84,14 +69,8 @@ func (e APIError) Code() string {
 	return ""
 }
 
-// NotEnabled reports whether the error is the API's 403 for an account Crawl is not
-// enabled for (CodeNotEnabled).
-func (e APIError) NotEnabled() bool {
-	return e.StatusCode == http.StatusForbidden && e.Code() == CodeNotEnabled
-}
-
 func (e APIError) Error() string {
-	if e.NotEnabled() {
+	if e.StatusCode == http.StatusForbidden && e.Code() == CodeNotEnabled {
 		return fmt.Sprintf("zenrows crawl api request failed with status %d: Crawl is not enabled for this account (%s)",
 			e.StatusCode, CodeNotEnabled)
 	}
