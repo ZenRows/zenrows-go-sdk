@@ -11,8 +11,8 @@ import (
 const (
 	// CodeNotEnabled (403) means Crawl is not enabled for this account.
 	CodeNotEnabled = "REQS008"
-	// CodeTooManyCrawls (429) means the account has too many crawls running. Retry after
-	// APIError.RetryAfter.
+	// CodeTooManyCrawls (429) means the account has reached its limit of active jobs (3 by
+	// default), shared with its Batch jobs. Retry after APIError.RetryAfter.
 	CodeTooManyCrawls = "too_many_crawls"
 	// CodeCrawlNotFound (404) means no crawl with this id exists for the account.
 	CodeCrawlNotFound = "crawl_not_found"
@@ -52,9 +52,6 @@ func parseProblem(body []byte) *Problem {
 	if err := json.Unmarshal(body, &p); err != nil {
 		return nil
 	}
-	if p.Code == "" {
-		p.Code = "internal"
-	}
 	extras := map[string]any{}
 	for k, v := range raw {
 		if !standardProblemFields[k] {
@@ -79,12 +76,12 @@ type APIError struct {
 }
 
 // Code is the problem `code` member (e.g. "crawl_not_found", "too_many_crawls", "REQS008"), or
-// "internal" when the body couldn't be parsed as Problem JSON. Stable; safe to branch on.
+// "" when the body has none. Stable; safe to branch on.
 func (e APIError) Code() string {
 	if e.Detail != nil {
 		return e.Detail.Code
 	}
-	return "internal"
+	return ""
 }
 
 // NotEnabled reports whether the error is the API's 403 for an account Crawl is not

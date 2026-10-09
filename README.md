@@ -63,7 +63,7 @@ one-shot batch with every task known upfront.
 
 ### Crawl API Service
 
-> The Crawl API takes one start URL, follows the links behind it, and returns the URLs it
+> The Crawl API (beta) takes one start URL, follows the links behind it, and returns the URLs it
 keeps — optionally with each page's HTML. A crawl runs asynchronously: start it, wait for it to
 end, then read its results.
 

@@ -1,5 +1,8 @@
 // Package crawl is a client for the Zenrows Crawl API. Give it one start URL, and it walks the
-// links behind it and returns the URLs it keeps — optionally with each page's HTML.
+// links behind it and returns the URLs it keeps — optionally with each page's HTML. A crawl
+// stays on the start URL's registrable domain; subdomains count.
+//
+// Crawl is in Beta: this package is v0, and its API can change before v1.
 //
 // A crawl is a long-running job: Create starts it and returns at once, while it runs. Wait
 // blocks until it ends; Get reads its status, coverage and one page of results; IterResults
@@ -81,10 +84,10 @@ func crawlPath(crawlID string) string {
 
 // Create starts a crawl and returns it at once, with StatusRunning. Poll it with Wait or Get.
 //
-// When the account has too many crawls running, Create returns an
-// APIError with StatusCode 429 and Code() CodeTooManyCrawls; nothing is created, and
-// APIError.RetryAfter says when to retry. The create is retried on transient failures only
-// when params.IdempotencyKey is set.
+// When the account has reached its limit of active jobs (3 by default), shared with its Batch
+// jobs, Create returns an APIError with StatusCode 429 and Code() CodeTooManyCrawls at once;
+// nothing is created, and APIError.RetryAfter says when to retry. The create is retried on
+// other transient failures only when params.IdempotencyKey is set.
 func (c *Client) Create(ctx context.Context, params CreateParams) (*Crawl, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
