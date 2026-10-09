@@ -24,11 +24,16 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 )
 
 const apiKeyHeader = "X-API-Key" //nolint:gosec // header name, not a credential value
+
+// codeCrawlBusy is the 503 a stop gets while the crawl is saving its own progress. Nothing was
+// saved and the crawl is still running, so the stop is safe to repeat after Retry-After.
+const codeCrawlBusy = "crawl_busy"
 
 // A download line holds a URL plus its page's HTML: read with a 64 KiB buffer that may grow
 // to maxDownloadLineBytes for one line.
@@ -170,17 +175,34 @@ func (c *Client) List(ctx context.Context, opts ListOptions) (*ListResponse, err
 // Stop stops a running crawl. The URLs it kept stay readable; a stopped crawl cannot resume.
 // Stopping a crawl that has already ended is not an error: it returns the crawl as it ended.
 // Pages already in flight finish, so read the final coverage and results with Get.
+//
+// A 503 with Code() "crawl_busy" means the stop was not saved and the crawl is still running.
+// Stop retries it up to WithRetries times, waiting Retry-After each time, then returns it.
 func (c *Client) Stop(ctx context.Context, crawlID string) (*StopResponse, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
 	}
 
-	var result StopResponse
-	req := c.http.R().SetResult(&result)
-	if err := c.do(ctx, req, http.MethodPost, crawlPath(crawlID)+"/stop"); err != nil {
-		return nil, err
+	for attempt := 0; ; attempt++ {
+		var result StopResponse
+		req := c.http.R().SetResult(&result)
+		err := c.do(ctx, req, http.MethodPost, crawlPath(crawlID)+"/stop")
+		if err == nil {
+			return &result, nil
+		}
+		var apiErr APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable ||
+			apiErr.Code() != codeCrawlBusy || attempt >= c.cfg.retries {
+			return nil, err
+		}
+		wait := apiErr.RetryAfter
+		if wait <= 0 {
+			wait = time.Second
+		}
+		if !sleepCtx(ctx, wait) {
+			return nil, ctx.Err()
+		}
 	}
-	return &result, nil
 }
 
 // Content fetches one kept URL's page (HTML for OutputFormatHTML). contentID is a content id or
