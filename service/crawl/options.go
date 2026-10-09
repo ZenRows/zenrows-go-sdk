@@ -1,13 +1,18 @@
 package crawl
 
-import "os"
+import (
+	"os"
+	"time"
+)
 
 const defaultBaseURL = "https://api.zenrows.com/v1"
 
 // defaultRetries bounds automatic retries of transient failures (HTTP 429/502/503/504 and
-// network errors) on idempotent requests. Create never retries a 429. Retries use jittered exponential backoff and honor
-// Retry-After; set WithRetries(0) to disable.
+// network errors) on idempotent requests. Create never retries a 429. Retries use jittered
+// exponential backoff and honor Retry-After; set WithRetries(0) to disable.
 const defaultRetries = 3
+
+const defaultTimeout = 30 * time.Second
 
 // Option configures the Zenrows Crawl API client.
 type Option interface {
@@ -18,6 +23,7 @@ type options struct {
 	baseURL string
 	apiKey  string
 	retries int
+	timeout time.Duration
 }
 
 func defaultOptions() options {
@@ -25,6 +31,7 @@ func defaultOptions() options {
 		baseURL: defaultBaseURL,
 		apiKey:  os.Getenv("ZENROWS_API_KEY"),
 		retries: defaultRetries,
+		timeout: defaultTimeout,
 	}
 }
 
@@ -55,5 +62,17 @@ func WithRetries(retries int) Option {
 			retries = 0
 		}
 		o.retries = retries
+	}}
+}
+
+// WithTimeout configures how long one HTTP request may take; a request that runs out is a
+// network error, retried as such. For Download it bounds the wait for the response headers,
+// not the reading of the stream. Wait has its own WaitOptions.Timeout. Defaults to 30s;
+// 0 or less keeps the default.
+func WithTimeout(timeout time.Duration) Option {
+	return &funcOption{f: func(o *options) {
+		if timeout > 0 {
+			o.timeout = timeout
+		}
 	}}
 }

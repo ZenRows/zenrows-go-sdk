@@ -2,77 +2,67 @@ package crawl
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"time"
 )
 
-// Wait defaults.
-const (
-	defaultWaitTimeout         = 600 * time.Second
-	defaultWaitPollInterval    = 2 * time.Second
-	defaultWaitMaxPollInterval = 15 * time.Second
-	waitBackoff                = 1.5
-	waitJitter                 = 0.2
+const defaultWaitTimeout = 600 * time.Second
+
+// Wait polls every waitPollInterval at first, 1.5x longer each time, up to waitMaxPollInterval.
+var (
+	waitPollInterval    = 2 * time.Second
+	waitMaxPollInterval = 15 * time.Second
 )
 
-// WaiterTimeoutError is returned when Wait's timeout elapsed before the crawl ended. The crawl
-// keeps running; Wait never stops it.
-type WaiterTimeoutError struct {
-	Timeout time.Duration
-}
-
-func (e WaiterTimeoutError) Error() string {
-	return fmt.Sprintf("waiter: timed out after %s waiting for target state", e.Timeout)
-}
+const (
+	waitBackoff = 1.5
+	waitJitter  = 0.2
+)
 
 // WaitOptions configures Client.Wait.
 type WaitOptions struct {
-	Timeout         time.Duration // defaults to 600s
-	PollInterval    time.Duration // defaults to 2s; each wait is 1.5x the last, jittered
-	MaxPollInterval time.Duration // defaults to 15s
+	Timeout time.Duration // defaults to 600s
 }
 
-// Wait blocks until the crawl reaches a terminal status (any but StatusRunning) and returns
-// it, polling with jittered exponential backoff. A failed crawl is returned with its Error,
-// not as a Go error. Every poll shares the timeout, so Wait returns by then: on timeout it
-// returns WaiterTimeoutError and leaves the crawl running; ctx cancellation returns ctx.Err().
-// Read the results afterwards with IterResults.
+// Wait polls the crawl until its status is not StatusRunning or Timeout runs out, and returns
+// it. On timeout it returns the crawl as last read, still StatusRunning, without an error; the
+// crawl keeps running. A failed crawl is returned with its Error, not as a Go error. Wait reads
+// the crawl at least once, so it returns an error only when a read fails or ctx ends. Read the
+// results afterwards with Results.
 func (c *Client) Wait(ctx context.Context, crawlID string, opts WaitOptions) (Crawl, error) {
 	if opts.Timeout <= 0 {
 		opts.Timeout = defaultWaitTimeout
 	}
-	if opts.PollInterval <= 0 {
-		opts.PollInterval = defaultWaitPollInterval
-	}
-	if opts.MaxPollInterval <= 0 {
-		opts.MaxPollInterval = defaultWaitMaxPollInterval
-	}
-
 	waitCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
-	timedOut := func(err error) error {
-		if ctx.Err() == nil && waitCtx.Err() != nil {
-			return WaiterTimeoutError{Timeout: opts.Timeout}
+
+	// limit=1 keeps each poll cheap: only the crawl's status is needed here.
+	page, err := c.Get(ctx, crawlID, GetOptions{Limit: 1})
+	if err != nil {
+		return Crawl{}, err
+	}
+	// Called once waitCtx ends: the timeout returns the running crawl, a caller cancel its error.
+	ended := func() (Crawl, error) {
+		if err := ctx.Err(); err != nil {
+			return Crawl{}, err
 		}
-		return err
+		return page.Crawl, nil
 	}
 
-	interval := opts.PollInterval
-	for {
-		// limit=1 keeps each poll cheap: only the crawl's status is needed here.
-		page, err := c.Get(waitCtx, crawlID, GetOptions{Limit: 1})
-		if err != nil {
-			return Crawl{}, timedOut(err)
-		}
-		if page.Status.IsTerminal() {
-			return page.Crawl, nil
-		}
-
+	for interval := waitPollInterval; !page.Status.IsTerminal(); {
 		jitterFactor := 1.0 + (rand.Float64()*2-1)*waitJitter //nolint:gosec // timing jitter, not security-sensitive
 		if !sleepCtx(waitCtx, time.Duration(float64(interval)*jitterFactor)) {
-			return Crawl{}, timedOut(ctx.Err())
+			return ended()
 		}
-		interval = min(time.Duration(float64(interval)*waitBackoff), opts.MaxPollInterval)
+		next, err := c.Get(waitCtx, crawlID, GetOptions{Limit: 1})
+		if err != nil {
+			if waitCtx.Err() != nil {
+				return ended()
+			}
+			return Crawl{}, err
+		}
+		page = next
+		interval = min(time.Duration(float64(interval)*waitBackoff), waitMaxPollInterval)
 	}
+	return page.Crawl, nil
 }

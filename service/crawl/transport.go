@@ -2,7 +2,7 @@ package crawl
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -76,42 +76,51 @@ func parseRetryAfter(raw string) (time.Duration, bool) {
 // executeWithRetry sends req via method+path, retrying transient failures (429 except on
 // POST, 502/503/504, or a network error) up to maxRetries times with jittered exponential
 // backoff (honoring Retry-After when present). Only idempotent requests are replayed: GET/PUT/DELETE/HEAD/
-// OPTIONS, plus POST when the caller supplied an Idempotency-Key header. Context
-// cancellation/timeout is never retried — the caller set that budget.
-func executeWithRetry(ctx context.Context, req *resty.Request, method, path string, maxRetries int) (*resty.Response, error) {
+// OPTIONS, plus POST when the caller supplied an Idempotency-Key header. Cancellation of ctx is
+// never retried: the caller set that budget.
+//
+// Each attempt must receive its response within timeout. A request sent with
+// SetDoNotParseResponse (Download) is bounded only until its headers arrive, so its body stays
+// readable until the caller calls the returned release. The caller must always call release.
+func executeWithRetry(
+	ctx context.Context, req *resty.Request, method, path string, maxRetries int, timeout time.Duration,
+) (res *resty.Response, release context.CancelFunc, err error) {
 	idempotent := idempotentMethods[method] || (method == http.MethodPost && hasIdempotencyKey(req))
 
-	attempt := 0
-	for {
-		res, err := req.Execute(method, path)
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				return res, err
-			}
-			if idempotent && attempt < maxRetries {
-				if !sleepCtx(ctx, backoffDuration(attempt)) {
-					return res, ctx.Err()
-				}
-				attempt++
-				continue
-			}
-			return res, err
-		}
+	for attempt := 0; ; attempt++ {
+		attemptCtx, cancel := context.WithCancel(ctx)
+		timer := time.AfterFunc(timeout, cancel)
+		res, err = req.SetContext(attemptCtx).Execute(method, path)
+		timedOut := !timer.Stop()
 
-		if idempotent && attempt < maxRetries && isRetryableStatus(method, res.StatusCode()) {
+		var wait time.Duration
+		switch {
+		case err != nil:
+			cancel()
+			if ctx.Err() != nil {
+				return res, cancel, err
+			}
+			if timedOut {
+				err = fmt.Errorf("%s %s: no response within %s: %w", method, path, timeout, context.DeadlineExceeded)
+			}
+			if !idempotent || attempt >= maxRetries {
+				return res, cancel, err
+			}
+			wait = backoffDuration(attempt)
+		case idempotent && attempt < maxRetries && isRetryableStatus(method, res.StatusCode()):
 			closeRawBody(res)
-			wait, ok := retryAfterDuration(res)
-			if !ok {
+			cancel()
+			var ok bool
+			if wait, ok = retryAfterDuration(res); !ok {
 				wait = backoffDuration(attempt)
 			}
-			if !sleepCtx(ctx, wait) {
-				return res, ctx.Err()
-			}
-			attempt++
-			continue
+		default:
+			return res, cancel, nil
 		}
 
-		return res, nil
+		if !sleepCtx(ctx, wait) {
+			return res, cancel, ctx.Err()
+		}
 	}
 }
 

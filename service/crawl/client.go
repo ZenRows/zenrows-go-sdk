@@ -5,9 +5,9 @@
 // Crawl is in Beta: this package is v0, and its API can change before v1.
 //
 // A crawl is a long-running job: Create starts it and returns at once, while it runs. Wait
-// blocks until it ends; Get reads its status, coverage and one page of results; IterResults
-// reads every result. GetContent and Download read the pages of a crawl created with
-// OutputFormatHTML. Stop ends a running crawl early. List / IterCrawls list the account's crawls.
+// blocks until it ends; Get reads its status, coverage and one page of results; Results
+// reads every result. Content and Download read the pages of a crawl created with
+// OutputFormatHTML. Stop ends a running crawl early. List lists the account's crawls.
 //
 // The main entry point is Client (via NewClient).
 package crawl
@@ -59,16 +59,9 @@ func (c *Client) isConfigured() bool {
 	return c.cfg.baseURL != "" && c.cfg.apiKey != ""
 }
 
-func (c *Client) request(ctx context.Context, result any) *resty.Request {
-	req := c.http.R().SetContext(ctx)
-	if result != nil {
-		req.SetResult(result)
-	}
-	return req
-}
-
 func (c *Client) do(ctx context.Context, req *resty.Request, method, path string) error {
-	res, err := executeWithRetry(ctx, req, method, path, c.cfg.retries)
+	res, release, err := executeWithRetry(ctx, req, method, path, c.cfg.retries, c.cfg.timeout)
+	defer release()
 	if err != nil {
 		return err
 	}
@@ -94,7 +87,7 @@ func (c *Client) Create(ctx context.Context, params CreateParams) (*Crawl, error
 	}
 
 	var result Crawl
-	req := c.request(ctx, &result).SetBody(params)
+	req := c.http.R().SetResult(&result).SetBody(params)
 	if params.IdempotencyKey != "" {
 		req.SetHeader("Idempotency-Key", params.IdempotencyKey)
 	}
@@ -105,14 +98,14 @@ func (c *Client) Create(ctx context.Context, params CreateParams) (*Crawl, error
 }
 
 // Get reads a crawl's status and coverage, and one page of the URLs it has kept. For all of
-// them prefer IterResults.
+// them prefer Results.
 func (c *Client) Get(ctx context.Context, crawlID string, opts GetOptions) (*CrawlWithResults, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
 	}
 
 	var result CrawlWithResults
-	req := c.request(ctx, &result)
+	req := c.http.R().SetResult(&result)
 	if opts.Cursor != "" {
 		req.SetQueryParam("cursor", opts.Cursor)
 	}
@@ -125,14 +118,13 @@ func (c *Client) Get(ctx context.Context, crawlID string, opts GetOptions) (*Cra
 	return &result, nil
 }
 
-// IterResults auto-paginates Get, yielding (Result, error) pairs, and stops once the API
-// returns no next cursor (the crawl has ended and its last page was read). Call it after Wait
-// to read every result. On a crawl that is still running (whose next cursor is never nil) it
-// yields the URLs kept so far and stops at the first empty page rather than polling. A non-nil
-// error from the sequence should stop the range loop.
-func (c *Client) IterResults(ctx context.Context, crawlID string, opts GetOptions) iter.Seq2[Result, error] {
+// Results reads every URL a crawl has kept, following the next cursor and yielding
+// (Result, error) pairs. On a crawl that is still running it yields what was kept so far and
+// stops at the first empty page rather than polling: call it after Wait to read them all. A
+// non-nil error from the sequence should stop the range loop.
+func (c *Client) Results(ctx context.Context, crawlID string, opts ResultsOptions) iter.Seq2[Result, error] {
 	return func(yield func(Result, error) bool) {
-		cursor := opts.Cursor
+		var cursor string
 		for {
 			page, err := c.Get(ctx, crawlID, GetOptions{Cursor: cursor, Limit: opts.Limit})
 			if err != nil {
@@ -152,15 +144,15 @@ func (c *Client) IterResults(ctx context.Context, crawlID string, opts GetOption
 	}
 }
 
-// List lists the account's crawls, newest first, without their results. For most uses prefer
-// the auto-paginating IterCrawls.
+// List reads one page of the account's crawls, newest first, without their results. Pass the
+// page's NextCursor in ListOptions.Cursor to read the next one.
 func (c *Client) List(ctx context.Context, opts ListOptions) (*ListResponse, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
 	}
 
 	var result ListResponse
-	req := c.request(ctx, &result)
+	req := c.http.R().SetResult(&result)
 	if opts.Cursor != "" {
 		req.SetQueryParam("cursor", opts.Cursor)
 	}
@@ -173,31 +165,6 @@ func (c *Client) List(ctx context.Context, opts ListOptions) (*ListResponse, err
 	return &result, nil
 }
 
-// IterCrawls auto-paginates List, yielding (Crawl, error) pairs. Stops (without yielding a
-// further error) once the pages are exhausted; a non-nil error from the sequence should stop
-// the range loop.
-func (c *Client) IterCrawls(ctx context.Context, opts ListOptions) iter.Seq2[Crawl, error] {
-	return func(yield func(Crawl, error) bool) {
-		cursor := opts.Cursor
-		for {
-			page, err := c.List(ctx, ListOptions{Cursor: cursor, Limit: opts.Limit})
-			if err != nil {
-				yield(Crawl{}, err)
-				return
-			}
-			for _, crawl := range page.Crawls {
-				if !yield(crawl, nil) {
-					return
-				}
-			}
-			if page.NextCursor == "" {
-				return
-			}
-			cursor = page.NextCursor
-		}
-	}
-}
-
 // Stop stops a running crawl. The URLs it kept stay readable; a stopped crawl cannot resume.
 // Stopping a crawl that has already ended is not an error: it returns the crawl as it ended.
 // Pages already in flight finish, so read the final coverage and results with Get.
@@ -207,23 +174,24 @@ func (c *Client) Stop(ctx context.Context, crawlID string) (*StopResponse, error
 	}
 
 	var result StopResponse
-	req := c.request(ctx, &result)
+	req := c.http.R().SetResult(&result)
 	if err := c.do(ctx, req, http.MethodPost, crawlPath(crawlID)+"/stop"); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// GetContent fetches one kept URL's page (HTML for OutputFormatHTML). contentID is
+// Content fetches one kept URL's page (HTML for OutputFormatHTML). contentID is
 // Result.ContentID(), present once the result's ContentStatus is ContentStatusFetched. The
 // returned bytes are the raw page — unlike other methods here, this is not decoded as JSON.
-func (c *Client) GetContent(ctx context.Context, crawlID, contentID string) ([]byte, error) {
+func (c *Client) Content(ctx context.Context, crawlID, contentID string) ([]byte, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
 	}
 
 	path := crawlPath(crawlID) + "/contents/" + url.PathEscape(contentID)
-	res, err := executeWithRetry(ctx, c.http.R().SetContext(ctx), http.MethodGet, path, c.cfg.retries)
+	res, release, err := executeWithRetry(ctx, c.http.R(), http.MethodGet, path, c.cfg.retries, c.cfg.timeout)
+	defer release()
 	if err != nil {
 		return nil, err
 	}
@@ -240,6 +208,14 @@ type Download struct {
 	// Status is the crawl's status when the file was read. StatusRunning means it holds what
 	// the crawl has kept so far, and a later download may hold more.
 	Status Status
+
+	release context.CancelFunc
+}
+
+// Close closes the stream and releases its request.
+func (d *Download) Close() error {
+	defer d.release()
+	return d.ReadCloser.Close()
 }
 
 // Lines decodes the stream one line at a time, yielding (DownloadLine, error) pairs. A
@@ -275,17 +251,21 @@ func (c *Client) Download(ctx context.Context, crawlID string) (*Download, error
 		return nil, NotConfiguredError{}
 	}
 
-	req := c.http.R().SetContext(ctx).SetDoNotParseResponse(true)
-	res, err := executeWithRetry(ctx, req, http.MethodGet, crawlPath(crawlID)+"/download", c.cfg.retries)
+	req := c.http.R().SetDoNotParseResponse(true)
+	res, release, err := executeWithRetry(ctx, req, http.MethodGet, crawlPath(crawlID)+"/download",
+		c.cfg.retries, c.cfg.timeout)
 	if err != nil {
 		closeRawBody(res)
+		release()
 		return nil, err
 	}
 	body := res.RawBody()
 	if body == nil {
+		release()
 		return nil, errors.New("download: empty response")
 	}
 	if res.IsError() {
+		defer release()
 		defer body.Close()
 		raw, readErr := io.ReadAll(body)
 		if readErr != nil {
@@ -293,5 +273,5 @@ func (c *Client) Download(ctx context.Context, crawlID string) (*Download, error
 		}
 		return nil, newAPIError(res.StatusCode(), res.Header(), raw)
 	}
-	return &Download{ReadCloser: body, Status: Status(res.Header().Get("X-Crawl-Status"))}, nil
+	return &Download{ReadCloser: body, Status: Status(res.Header().Get("X-Crawl-Status")), release: release}, nil
 }

@@ -84,7 +84,7 @@ func TestE2ECrawl(t *testing.T) {
 	}
 
 	results := make([]crawl.Result, 0, done.Coverage.ItemsFound)
-	for r, err := range client.IterResults(ctx, created.CrawlID, crawl.GetOptions{}) {
+	for r, err := range client.Results(ctx, created.CrawlID, crawl.ResultsOptions{}) {
 		if err != nil {
 			t.Fatalf("results: %v", err)
 		}
@@ -125,7 +125,7 @@ func checkContent(ctx context.Context, t *testing.T, client *crawl.Client, crawl
 		if r.ContentStatus != crawl.ContentStatusFetched {
 			continue
 		}
-		page, err := client.GetContent(ctx, crawlID, r.ContentID())
+		page, err := client.Content(ctx, crawlID, r.ContentID())
 		if err != nil {
 			t.Fatalf("content of %s: %v", r.URL, err)
 		}
@@ -160,14 +160,15 @@ func checkDownload(ctx context.Context, t *testing.T, client *crawl.Client, craw
 
 func checkListed(ctx context.Context, t *testing.T, client *crawl.Client, crawlID string) {
 	t.Helper()
-	for c, err := range client.IterCrawls(ctx, crawl.ListOptions{Limit: 100}) {
-		if err != nil {
-			t.Fatalf("list: %v", err)
-		}
+	page, err := client.List(ctx, crawl.ListOptions{Limit: 100})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, c := range page.Crawls {
 		if c.CrawlID == crawlID {
 			t.Logf("list: found %s", crawlID)
 			return
 		}
 	}
-	t.Fatalf("list: %s not found", crawlID)
+	t.Fatalf("list: %s not in the newest 100 crawls", crawlID)
 }

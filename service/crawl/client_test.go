@@ -48,13 +48,13 @@ func TestAllMethodsRejectWhenNotConfigured(t *testing.T) {
 	ctx := context.Background()
 
 	cases := map[string]func() error{
-		"Create":     func() error { _, err := client.Create(ctx, crawl.CreateParams{}); return err },
-		"Get":        func() error { _, err := client.Get(ctx, testCrawlID, crawl.GetOptions{}); return err },
-		"List":       func() error { _, err := client.List(ctx, crawl.ListOptions{}); return err },
-		"Stop":       func() error { _, err := client.Stop(ctx, testCrawlID); return err },
-		"GetContent": func() error { _, err := client.GetContent(ctx, testCrawlID, "ct_1"); return err },
-		"Download":   func() error { _, err := client.Download(ctx, testCrawlID); return err },
-		"Wait":       func() error { _, err := client.Wait(ctx, testCrawlID, crawl.WaitOptions{}); return err },
+		"Create":   func() error { _, err := client.Create(ctx, crawl.CreateParams{}); return err },
+		"Get":      func() error { _, err := client.Get(ctx, testCrawlID, crawl.GetOptions{}); return err },
+		"List":     func() error { _, err := client.List(ctx, crawl.ListOptions{}); return err },
+		"Stop":     func() error { _, err := client.Stop(ctx, testCrawlID); return err },
+		"Content":  func() error { _, err := client.Content(ctx, testCrawlID, "ct_1"); return err },
+		"Download": func() error { _, err := client.Download(ctx, testCrawlID); return err },
+		"Wait":     func() error { _, err := client.Wait(ctx, testCrawlID, crawl.WaitOptions{}); return err },
 	}
 	for name, call := range cases {
 		var notConfigured crawl.NotConfiguredError
@@ -139,10 +139,13 @@ func TestGetParsesResultsAndForwardsPaging(t *testing.T) {
 	}
 }
 
-func TestIterResultsFollowsCursorUntilNull(t *testing.T) {
+func TestResultsFollowsCursorUntilNull(t *testing.T) {
 	var calls atomic.Int32
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		if r.URL.Query().Get("limit") != "2" {
+			t.Errorf("limit = %q, want 2", r.URL.Query().Get("limit"))
+		}
 		switch r.URL.Query().Get("cursor") {
 		case "":
 			writeJSON(w, http.StatusOK, `{"crawl_id":"c_123","status":"completed","results":[{"url":"u1"},{"url":"u2"}],
@@ -155,7 +158,7 @@ func TestIterResultsFollowsCursorUntilNull(t *testing.T) {
 	})
 
 	urls := make([]string, 0, 3)
-	for r, err := range client.IterResults(context.Background(), testCrawlID, crawl.GetOptions{}) {
+	for r, err := range client.Results(context.Background(), testCrawlID, crawl.ResultsOptions{Limit: 2}) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -166,7 +169,7 @@ func TestIterResultsFollowsCursorUntilNull(t *testing.T) {
 	}
 }
 
-func TestIterResultsStopsWhenARunningCrawlIsCaughtUp(t *testing.T) {
+func TestResultsStopsWhenARunningCrawlIsCaughtUp(t *testing.T) {
 	var calls atomic.Int32
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -178,7 +181,7 @@ func TestIterResultsStopsWhenARunningCrawlIsCaughtUp(t *testing.T) {
 	})
 
 	n := 0
-	for _, err := range client.IterResults(context.Background(), testCrawlID, crawl.GetOptions{}) {
+	for _, err := range client.Results(context.Background(), testCrawlID, crawl.ResultsOptions{}) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -189,27 +192,20 @@ func TestIterResultsStopsWhenARunningCrawlIsCaughtUp(t *testing.T) {
 	}
 }
 
-func TestIterCrawlsFollowsNextCursor(t *testing.T) {
+func TestListForwardsPaging(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/crawls" || r.URL.Query().Get("limit") != "1" {
+		if r.URL.Path != "/crawls" || r.URL.RawQuery != "cursor=n&limit=1" {
 			t.Errorf("request = %s %s", r.URL.Path, r.URL.RawQuery)
-		}
-		if r.URL.Query().Get("cursor") == "" {
-			writeJSON(w, http.StatusOK, `{"crawls":[{"crawl_id":"c_2","status":"running"}],"next_cursor":"n"}`)
-			return
 		}
 		writeJSON(w, http.StatusOK, `{"crawls":[{"crawl_id":"c_1","status":"completed"}]}`)
 	})
 
-	ids := make([]string, 0, 2)
-	for c, err := range client.IterCrawls(context.Background(), crawl.ListOptions{Limit: 1}) {
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		ids = append(ids, c.CrawlID)
+	got, err := client.List(context.Background(), crawl.ListOptions{Cursor: "n", Limit: 1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Join(ids, ",") != "c_2,c_1" {
-		t.Fatalf("ids = %v", ids)
+	if len(got.Crawls) != 1 || got.Crawls[0].CrawlID != "c_1" || got.NextCursor != "" {
+		t.Fatalf("list = %+v", got)
 	}
 }
 
@@ -233,7 +229,7 @@ func TestStop(t *testing.T) {
 	}
 }
 
-func TestGetContentReturnsRawBody(t *testing.T) {
+func TestContentReturnsRawBody(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/crawls/c_123/contents/ct_a" {
 			t.Errorf("path = %q", r.URL.Path)
@@ -242,7 +238,7 @@ func TestGetContentReturnsRawBody(t *testing.T) {
 		_, _ = io.WriteString(w, "<html>a</html>")
 	})
 
-	got, err := client.GetContent(context.Background(), testCrawlID, "ct_a")
+	got, err := client.Content(context.Background(), testCrawlID, "ct_a")
 	if err != nil || string(got) != "<html>a</html>" {
 		t.Fatalf("content = %q, err = %v", got, err)
 	}
@@ -424,7 +420,13 @@ func TestCreateWithIdempotencyKeyRetriesTransientFailures(t *testing.T) {
 	}
 }
 
+func fastWait(t *testing.T) {
+	t.Helper()
+	t.Cleanup(crawl.SetWaitPollInterval(time.Millisecond))
+}
+
 func TestWaitPollsUntilTerminal(t *testing.T) {
+	fastWait(t)
 	var calls atomic.Int32
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("limit") != "1" {
@@ -438,7 +440,7 @@ func TestWaitPollsUntilTerminal(t *testing.T) {
 			"results":[],"next_cursor":null}`)
 	})
 
-	got, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{PollInterval: time.Millisecond})
+	got, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -447,30 +449,33 @@ func TestWaitPollsUntilTerminal(t *testing.T) {
 	}
 }
 
-func TestWaitTimesOut(t *testing.T) {
+func TestWaitReturnsTheRunningCrawlOnTimeout(t *testing.T) {
+	fastWait(t)
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, `{"crawl_id":"c_123","status":"running","results":[],"next_cursor":"x"}`)
 	})
 
-	_, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{
-		Timeout: 30 * time.Millisecond, PollInterval: 5 * time.Millisecond,
-	})
-	var timeout crawl.WaiterTimeoutError
-	if !errors.As(err, &timeout) || timeout.Timeout != 30*time.Millisecond {
-		t.Fatalf("err = %v (%T)", err, err)
+	got, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{Timeout: 30 * time.Millisecond})
+	if err != nil || got.CrawlID != testCrawlID || got.Status != crawl.StatusRunning {
+		t.Fatalf("crawl = %+v, err = %v; want the running crawl and no error", got, err)
 	}
 }
 
 func TestWaitBoundsAHungPollByItsTimeout(t *testing.T) {
+	fastWait(t)
+	var calls atomic.Int32
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+		if calls.Add(1) > 1 {
+			<-r.Context().Done()
+			return
+		}
+		writeJSON(w, http.StatusOK, `{"crawl_id":"c_123","status":"running","results":[],"next_cursor":"x"}`)
 	})
 
 	start := time.Now()
-	_, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{Timeout: 50 * time.Millisecond})
-	var timeout crawl.WaiterTimeoutError
-	if !errors.As(err, &timeout) {
-		t.Fatalf("err = %v (%T)", err, err)
+	got, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{Timeout: 50 * time.Millisecond})
+	if err != nil || got.Status != crawl.StatusRunning {
+		t.Fatalf("crawl = %+v, err = %v; want the running crawl and no error", got, err)
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("Wait returned after %s, want about 50ms", elapsed)
@@ -485,9 +490,54 @@ func TestWaitReturnsCallerCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_, err := client.Wait(ctx, testCrawlID, crawl.WaitOptions{Timeout: time.Minute})
-	var timeout crawl.WaiterTimeoutError
-	if errors.As(err, &timeout) || !errors.Is(err, context.DeadlineExceeded) {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v (%T), want the caller's context.DeadlineExceeded", err, err)
+	}
+}
+
+func TestRequestTimeout(t *testing.T) {
+	var calls atomic.Int32
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		<-r.Context().Done()
+	}, crawl.WithTimeout(20*time.Millisecond), crawl.WithRetries(1))
+
+	start := time.Now()
+	_, err := client.Get(context.Background(), testCrawlID, crawl.GetOptions{})
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "no response within 20ms") {
+		t.Fatalf("err = %v, want a request timeout", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d, want 2: a timed out GET is retried", calls.Load())
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Get returned after %s", elapsed)
+	}
+}
+
+func TestDownloadTimeoutCoversHeadersOnly(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Crawl-Status", "completed")
+		_, _ = io.WriteString(w, `{"url":"u1"}`+"\n")
+		w.(http.Flusher).Flush()
+		time.Sleep(60 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"url":"u2"}`+"\n")
+	}, crawl.WithTimeout(20*time.Millisecond))
+
+	dl, err := client.Download(context.Background(), testCrawlID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer dl.Close()
+	n := 0
+	for _, err := range dl.Lines() {
+		if err != nil {
+			t.Fatalf("read past the request timeout: %v", err)
+		}
+		n++
+	}
+	if n != 2 {
+		t.Fatalf("lines = %d, want 2", n)
 	}
 }
 
