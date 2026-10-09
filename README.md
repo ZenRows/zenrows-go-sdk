@@ -24,6 +24,7 @@ access geo-targeted content, we have the right tools for your specific use cases
 - [SDKs](#sdks)
     - [Fetch Service](#fetch-service)
     - [Batch API Service](#batch-api-service)
+    - [Crawl API Service](#crawl-api-service)
 - [Other Languages](#other-languages)
 - [Contributing](#contributing)
 - [License](#license)
@@ -59,6 +60,16 @@ one-shot batch with every task known upfront.
 **Directory**: [`service/batch`](./service/batch)
 
 - [Installation and Usage](./service/batch/README.md)
+
+### Crawl API Service
+
+> The Crawl API (new) takes one start URL, follows the links behind it, and returns the URLs it
+keeps — optionally with each page's HTML. A crawl runs asynchronously: start it, wait for it to
+end, then read its results.
+
+**Directory**: [`service/crawl`](./service/crawl)
+
+- [Installation and Usage](./service/crawl/README.md)
 
 ## Other Languages
 
