@@ -1,9 +1,6 @@
 package crawl
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "encoding/json"
 
 // Status is where a crawl stands. Every value but StatusRunning is terminal.
 // The server may add values not listed here, and they decode as-is; callers must handle
@@ -177,17 +174,8 @@ type Result struct {
 	ContentStatus ContentStatus `json:"content_status,omitempty"`
 	// ContentURL is the page's API path (e.g. "/v1/crawls/c_x/contents/ct_y"), present only
 	// when ContentStatus is ContentStatusFetched. Read it with Client.Content(ctx, crawlID,
-	// result.ContentID()).
+	// result.ContentURL).
 	ContentURL string `json:"content_url,omitempty"`
-}
-
-// ContentID is the content identifier in ContentURL (its last path segment), or "" when the
-// page has not been fetched.
-func (r Result) ContentID() string {
-	if r.ContentURL == "" {
-		return ""
-	}
-	return r.ContentURL[strings.LastIndex(r.ContentURL, "/")+1:]
 }
 
 // GetOptions pages a crawl's results in Client.Get.

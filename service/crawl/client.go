@@ -22,6 +22,7 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -78,7 +79,7 @@ func crawlPath(crawlID string) string {
 // Create starts a crawl and returns it at once, with StatusRunning. Poll it with Wait or Get.
 //
 // When the account has reached its limit of active jobs (3 by default), shared with its Batch
-// jobs, Create returns an APIError with StatusCode 429 and Code() CodeTooManyCrawls at once;
+// jobs, Create returns an APIError with StatusCode 429 and Code() "too_many_crawls" at once;
 // nothing is created, and APIError.RetryAfter says when to retry. The create is retried on
 // other transient failures only when params.IdempotencyKey is set.
 func (c *Client) Create(ctx context.Context, params CreateParams) (*Crawl, error) {
@@ -181,14 +182,15 @@ func (c *Client) Stop(ctx context.Context, crawlID string) (*StopResponse, error
 	return &result, nil
 }
 
-// Content fetches one kept URL's page (HTML for OutputFormatHTML). contentID is
-// Result.ContentID(), present once the result's ContentStatus is ContentStatusFetched. The
+// Content fetches one kept URL's page (HTML for OutputFormatHTML). contentID is a content id or
+// a Result.ContentURL, present once the result's ContentStatus is ContentStatusFetched. The
 // returned bytes are the raw page — unlike other methods here, this is not decoded as JSON.
 func (c *Client) Content(ctx context.Context, crawlID, contentID string) ([]byte, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
 	}
 
+	contentID = contentID[strings.LastIndex(contentID, "/")+1:]
 	path := crawlPath(crawlID) + "/contents/" + url.PathEscape(contentID)
 	res, release, err := executeWithRetry(ctx, c.http.R(), http.MethodGet, path, c.cfg.retries, c.cfg.timeout)
 	defer release()
