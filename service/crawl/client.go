@@ -315,15 +315,11 @@ func (c *Client) Download(ctx context.Context, crawlID string) (*Download, error
 	return &Download{ReadCloser: body, Status: Status(res.Header().Get("X-Crawl-Status")), release: release}, nil
 }
 
-// maxStopRetryWait bounds the wait a crawl_busy Retry-After can ask for before Stop tries again,
-// so a large server value cannot hang the stop.
-const maxStopRetryWait = 30 * time.Second
-
 // stopRetryWait is how long Stop waits after a 503 crawl_busy: the Retry-After the server sent,
-// 1s when it sent none, and never more than maxStopRetryWait.
+// 1s when it sent none, and never more than maxRetryAfterWait.
 func stopRetryWait(retryAfter time.Duration) time.Duration {
 	if retryAfter <= 0 {
 		return time.Second
 	}
-	return min(retryAfter, maxStopRetryWait)
+	return min(retryAfter, maxRetryAfterWait)
 }
