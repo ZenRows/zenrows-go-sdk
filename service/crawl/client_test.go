@@ -600,12 +600,13 @@ func TestRetryAfterWaitIsCappedAt30Seconds(t *testing.T) {
 		"1":    time.Second,
 		"30":   30 * time.Second,
 		"3600": 30 * time.Second,
+		"1e12": 30 * time.Second,
 	} {
 		if got, ok := crawl.RetryAfterWait(raw); !ok || got != want {
 			t.Errorf("RetryAfterWait(%q) = %s, %v; want %s", raw, got, ok, want)
 		}
 	}
-	for _, raw := range []string{"", "-1", "soon"} {
+	for _, raw := range []string{"", "-1", "soon", "NaN", "Inf", "-Inf", "1e400"} {
 		if _, ok := crawl.RetryAfterWait(raw); ok {
 			t.Errorf("RetryAfterWait(%q) accepted an invalid header", raw)
 		}

@@ -3,6 +3,7 @@ package crawl
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -74,8 +75,12 @@ func parseRetryAfter(raw string) (time.Duration, bool) {
 		return 0, false
 	}
 	secs, err := strconv.ParseFloat(raw, 64)
-	if err != nil || secs < 0 {
+	if err != nil || math.IsNaN(secs) || math.IsInf(secs, 0) || secs < 0 {
 		return 0, false
+	}
+	// Converting a value past the int64 range to a Duration is undefined and can go negative.
+	if secs >= math.MaxInt64/float64(time.Second) {
+		return math.MaxInt64, true
 	}
 	return time.Duration(secs * float64(time.Second)), true
 }
