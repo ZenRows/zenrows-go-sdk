@@ -652,7 +652,8 @@ func main() {
 			"download": "Download", "stop": "Stop", "wait": "Wait"},
 		"params": map[string]string{"url": "URL", "depth": "Depth", "max_items": "MaxItems", "max_pages": "MaxPages",
 			"include_patterns": "IncludePatterns", "exclude_patterns": "ExcludePatterns", "output_format": "OutputFormat",
-			"idempotency_key": "IdempotencyKey", "cursor": "Cursor", "limit": "Limit", "timeout": "Timeout"},
+			"idempotency_key": "IdempotencyKey", "cursor": "Cursor", "limit": "Limit", "timeout": "Timeout",
+			"content_id": "contentID"},
 	}
 	b, _ := json.MarshalIndent(naming, "", "  ")
 	_ = os.WriteFile("/results/naming.json", b, 0o644)
