@@ -8,11 +8,11 @@ This module is v0 (`service/crawl/v0.x`), so its API can change before v1.
 
 ## Model
 
-A **crawl** is one run from one start URL. It walks up to `Depth` link hops, keeps the URLs that
-match `IncludePatterns` (and none of `ExcludePatterns`), and stops at `MaxItems` kept URLs or
-`MaxPages` fetched pages. It runs asynchronously: `Create` returns at once with
-`StatusRunning`, and the crawl ends `StatusCompleted`, `StatusStopped` (you called `Stop`) or
-`StatusFailed` (`Crawl.Error` says why). With `OutputFormat: crawl.OutputFormatHTML`, each kept
+A **crawl** is one run from one start URL. It walks up to `Depth` link hops (no limit when you
+leave `Depth` out), keeps the URLs that match `IncludePatterns` (and none of `ExcludePatterns`),
+and stops at `MaxItems` kept URLs or `MaxPages` fetched pages (100 each by default). It runs
+asynchronously: `Create` returns at once with `StatusRunning`, and the crawl ends
+`StatusCompleted`, `StatusStopped` (you called `Stop`) or `StatusFailed` (`Crawl.Error` says why). With `OutputFormat: crawl.OutputFormatHTML`, each kept
 URL's page is fetched too. A crawl stays on the start URL's registrable domain; subdomains count.
 
 ## Installation
@@ -40,7 +40,7 @@ func main() {
 
     created, err := client.Create(ctx, crawl.CreateParams{
         URL:             "https://www.scrapingcourse.com/ecommerce/",
-        Depth:           1,
+        Depth:           1, // omit for no depth limit
         MaxItems:        20,
         MaxPages:        30,
         IncludePatterns: []string{"/product/"},
@@ -100,7 +100,8 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
 
 ## Methods
 
-- `Create(ctx, CreateParams)` starts a crawl. Only the fields you set are sent.
+- `Create(ctx, CreateParams)` starts a crawl. Only the fields you set are sent. Leave `Depth`
+  out for no depth limit; `Crawl.Depth` is then nil. `MaxItems` and `MaxPages` default to 100.
 - `Get(ctx, crawlID, GetOptions)` reads the crawl and one page of results. `NextCursor` is never
   nil while the crawl runs (polling with it returns only new URLs) and nil once the crawl has
   ended and the last page was read.

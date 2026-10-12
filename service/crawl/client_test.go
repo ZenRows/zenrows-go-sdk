@@ -102,6 +102,33 @@ func TestCreateSendsOnlySetFields(t *testing.T) {
 	if got.CrawlID != testCrawlID || got.Status != crawl.StatusRunning || got.MaxItems != 10 {
 		t.Fatalf("crawl = %+v", got)
 	}
+	if got.Depth == nil || *got.Depth != 1 {
+		t.Fatalf("Depth = %v, want 1", got.Depth)
+	}
+}
+
+func TestCreateWithoutDepthSendsNoDepthAndReadsNoLimit(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		writeJSON(w, http.StatusAccepted, `{"crawl_id":"c_123","status":"running","url":"https://example.com/",
+			"max_items":100,"max_pages":100,
+			"coverage":{"pages_fetched":0,"pages_failed":0,"items_found":0},"created_at":"2026-10-08T10:00:00Z"}`)
+	})
+
+	got, err := client.Create(context.Background(), crawl.CreateParams{URL: "https://example.com/"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(gotBody) != 1 || gotBody["url"] != "https://example.com/" {
+		t.Fatalf("body = %v, want only url", gotBody)
+	}
+	if got.Depth != nil {
+		t.Fatalf("Depth = %d, want nil (no depth limit)", *got.Depth)
+	}
+	if got.MaxItems != 100 || got.MaxPages != 100 {
+		t.Fatalf("crawl = %+v", got)
+	}
 }
 
 func TestGetParsesResultsAndForwardsPaging(t *testing.T) {

@@ -25,7 +25,7 @@ import (
 const noMatch = "/crawl-acceptance-matches-nothing/"
 
 // documentedDefault is the default the README documents for MaxPages and MaxItems (check 21).
-const documentedDefault = 10
+const documentedDefault = 100
 
 var (
 	key     = os.Getenv("ZENROWS_API_KEY")
@@ -194,7 +194,9 @@ func main() {
 	_, _ = capClient.Create(ctx, crawl.CreateParams{URL: "https://example.com/", Depth: 1})
 	_, _ = capClient.Create(ctx, crawl.CreateParams{URL: "https://example.com/", Depth: 1, MaxItems: 5, MaxPages: 10,
 		IncludePatterns: []string{"/p/"}, IdempotencyKey: "idem-1"})
-	sentOK := len(bodies) == 2 && len(bodies[0]) == 2 && bodies[0]["url"] != nil && bodies[0]["depth"] != nil && len(bodies[1]) == 5
+	_, _ = capClient.Create(ctx, crawl.CreateParams{URL: "https://example.com/"})
+	sentOK := len(bodies) == 3 && len(bodies[0]) == 2 && bodies[0]["url"] != nil && bodies[0]["depth"] != nil && len(bodies[1]) == 5 &&
+		len(bodies[2]) == 1 && bodies[2]["url"] != nil
 	sentLine := "sent (stand-in server): " + js(bodies)
 
 	var A, B, C, F, ended *crawl.Crawl
@@ -212,7 +214,7 @@ func main() {
 			return outcome{"FAIL", esum(err), ""}
 		}
 		A = c
-		ok := sentOK && c.Status == crawl.StatusRunning && strings.HasPrefix(c.CrawlID, "c_") && c.URL == url0 && c.Depth == 1 &&
+		ok := sentOK && c.Status == crawl.StatusRunning && strings.HasPrefix(c.CrawlID, "c_") && c.URL == url0 && c.Depth != nil && *c.Depth == 1 &&
 			c.MaxItems == 5 && c.MaxPages == 10 && js(c.IncludePatterns) == js([]string{include})
 		return outcome{passIf(ok), fmt.Sprintf("%s, %s, %d ms; only set fields sent: %v", c.Status, c.CrawlID, time.Since(t).Milliseconds(), sentOK),
 			js(c) + "\n" + sentLine}
@@ -596,17 +598,36 @@ func main() {
 		codes["notFound"] = e.Code()
 		return outcome{passIf(ok && e.StatusCode == 404 && e.Code() == "crawl_not_found"), esum(err), ""}
 	})
-	run("13", "Invalid input", "Create with Depth 0 → 422 invalid_parameter", true, func() outcome {
+	// Depth 0 is the zero value, which the client does not send (no depth limit), so the
+	// invalid depth sent is -1.
+	run("13", "Invalid input", "Create with Depth -1 → 422 invalid_parameter", true, func() outcome {
 		p := base
-		p.Depth = 0
+		p.Depth = -1
 		c, err := client.Create(ctx, p)
 		if c != nil {
-			ledger(c.CrawlID, "depth 0 (unexpected create)")
+			ledger(c.CrawlID, "depth -1 (unexpected create)")
 			_, _ = client.Stop(ctx, c.CrawlID)
 		}
 		e, ok := apiErr(err)
 		codes["invalid"] = e.Code()
 		return outcome{passIf(ok && e.StatusCode == 422 && e.Code() == "invalid_parameter"), esum(err), ""}
+	})
+	// Extra: a create without Depth is accepted and its crawl echoes no depth. MaxPages 1 keeps
+	// the unlimited-depth crawl to one page; it is stopped at once.
+	run("x-go-no-depth", "Create without Depth", "accepted, running; Crawl.Depth is nil (no depth limit)", true, func() outcome {
+		p := base
+		p.Depth, p.MaxItems, p.MaxPages = 0, 1, 1
+		c, err := create(p)
+		if err != nil {
+			return outcome{"FAIL", esum(err), ""}
+		}
+		_, _ = client.Stop(ctx, c.CrawlID)
+		depth := "nil"
+		if c.Depth != nil {
+			depth = fmt.Sprint(*c.Depth)
+		}
+		return outcome{passIf(c.Depth == nil && strings.HasPrefix(c.CrawlID, "c_")),
+			fmt.Sprintf("%s, %s; Depth %s", c.CrawlID, c.Status, depth), js(c)}
 	})
 	run("14", "Gated option", "OutputFormat json → 422 invalid_parameter for a customer key", true, func() outcome {
 		p := base
