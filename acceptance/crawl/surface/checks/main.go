@@ -528,21 +528,36 @@ func main() {
 		if B == nil {
 			return outcome{"SKIP", "no html crawl", ""}
 		}
-		var cu string
-		for r, err := range client.Results(ctx, B.CrawlID, crawl.ResultsOptions{}) {
-			if err == nil && r.ContentURL != "" {
-				cu = r.ContentURL
-				break
+		firstFetched := func(id string) string {
+			for r, err := range client.Results(ctx, id, crawl.ResultsOptions{}) {
+				if err == nil && r.ContentURL != "" {
+					return r.ContentURL
+				}
 			}
+			return ""
+		}
+		// The stop in check 20 can land before any page is fetched. Then read a
+		// one-item html crawl that runs to the end instead.
+		src := B.CrawlID
+		cu := firstFetched(src)
+		if cu == "" {
+			p := base
+			p.MaxItems, p.OutputFormat = 1, crawl.OutputFormatHTML
+			own, err := create(p)
+			if err != nil {
+				return outcome{"FAIL", "create: " + esum(err), ""}
+			}
+			if _, err := client.Wait(ctx, own.CrawlID, crawl.WaitOptions{}); err != nil {
+				return outcome{"FAIL", "wait: " + esum(err), ""}
+			}
+			src = own.CrawlID
+			cu = firstFetched(src)
 		}
 		if cu == "" {
-			if stopStatus == crawl.StatusStopped {
-				return outcome{"SKIP", "the stop cancelled every page fetch, so no page has content to read (see check 20)", ""}
-			}
-			return outcome{"FAIL", "no result with ContentURL", ""}
+			return outcome{"FAIL", "no result with ContentURL on " + src, ""}
 		}
-		byID, err1 := client.Content(ctx, B.CrawlID, cu[strings.LastIndex(cu, "/")+1:])
-		byURL, err2 := client.Content(ctx, B.CrawlID, cu)
+		byID, err1 := client.Content(ctx, src, cu[strings.LastIndex(cu, "/")+1:])
+		byURL, err2 := client.Content(ctx, src, cu)
 		if err1 != nil || err2 != nil {
 			return outcome{"FAIL", esum(errors.Join(err1, err2)), ""}
 		}
