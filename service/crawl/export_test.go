@@ -11,3 +11,6 @@ func SetWaitPollInterval(d time.Duration) (restore func()) {
 
 // StopRetryWait exposes how long Stop waits after a 503 crawl_busy.
 func StopRetryWait(retryAfter time.Duration) time.Duration { return stopRetryWait(retryAfter) }
+
+// RetryAfterWait exposes the wait a Retry-After header asks for before a retry.
+func RetryAfterWait(raw string) (time.Duration, bool) { return retryAfterWait(raw) }

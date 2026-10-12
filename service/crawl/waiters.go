@@ -26,8 +26,9 @@ type WaitOptions struct {
 
 // Wait polls the crawl until its status is not StatusRunning or Timeout runs out, and returns
 // it. On timeout it returns the crawl as last read, still StatusRunning, without an error; the
-// crawl keeps running. A failed crawl is returned with its Error, not as a Go error. Wait reads
-// the crawl at least once, so it returns an error only when a read fails or ctx ends. Read the
+// crawl keeps running. A failed crawl is returned with its Error, not as a Go error. Every read,
+// the first included, runs within Timeout, so Wait never outlasts it. It returns an error when a
+// read fails, when ctx ends, or when Timeout runs out before the first read answers. Read the
 // results afterwards with Results.
 func (c *Client) Wait(ctx context.Context, crawlID string, opts WaitOptions) (*Crawl, error) {
 	if opts.Timeout <= 0 {
@@ -37,7 +38,7 @@ func (c *Client) Wait(ctx context.Context, crawlID string, opts WaitOptions) (*C
 	defer cancel()
 
 	// limit=1 keeps each poll cheap: only the crawl's status is needed here.
-	page, err := c.Get(ctx, crawlID, GetOptions{Limit: 1})
+	page, err := c.Get(waitCtx, crawlID, GetOptions{Limit: 1})
 	if err != nil {
 		return nil, err
 	}
