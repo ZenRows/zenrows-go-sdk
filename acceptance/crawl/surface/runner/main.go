@@ -136,7 +136,9 @@ func main() {
 		quick := block
 		var applied []string
 		for _, s := range [][3]string{
-			{`client := crawl.NewClient(crawl.WithAPIKey("YOUR_API_KEY"))`, `client := crawl.NewClient() // the key comes from ZENROWS_API_KEY`, "set the key (the README's ZENROWS_API_KEY route)"},
+			{`client := crawl.NewClient(crawl.WithAPIKey("YOUR_API_KEY"))`,
+				fmt.Sprintf("client := crawl.NewClient(crawl.WithBaseURL(%q)) // the key comes from ZENROWS_API_KEY", os.Getenv("CRAWL_API_BASE")),
+				"set the key (the README's ZENROWS_API_KEY route); base URL → CRAWL_API_BASE, so clean-up finds these crawls"},
 			{`"https://example.com/products/"`, fmt.Sprintf("%q", os.Getenv("CRAWL_URL")), "start URL → CRAWL_URL"},
 			{"MaxItems:        20,", "MaxItems:        5,", "max_items 20 → 5"},
 			{"MaxPages:        30,", "MaxPages:        10,", "max_pages 30 → 10 (at most 10)"},

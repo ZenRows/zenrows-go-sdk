@@ -34,8 +34,9 @@ digest) and the tool versions. `OUT_DIR` moves the output.
 
 ## What a run does
 
-1. **Source.** By default, this checkout, including changes not yet committed. With `REF`, the
-   repo at that ref from GitHub.
+1. **Source.** By default, the commit this checkout is at. The Go SDK has no local artifact:
+   the build installs that commit from GitHub, so push it first. Changes not yet committed or
+   pushed are not tested. With `REF`, the repo at that ref from GitHub.
 2. **Build.** In its own container, the release artifact: `go get` at the commit under test, from the public module proxy.
 3. **Clean test container.** It gets only the artifact (read-only), the checks in `surface/`
    (read-only), the inputs, and the key by name (`-e ZENROWS_API_KEY`). It has no source, no

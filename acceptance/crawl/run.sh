@@ -51,7 +51,7 @@ prepare_source() {
     # Tracked and untracked-but-not-ignored files, as a release build would see them.
     (cd "$root" && git ls-files -co --exclude-standard -z | tar --null -T - -cf -) | tar -C "$OUT_DIR/build/source" -xf -
     local sha; sha="$(git -C "$root" rev-parse HEAD)"
-    if [ -n "$(git -C "$root" status --porcelain -- . ":(exclude)$(realpath --relative-to="$root" "$HERE")")" ]; then
+    if [ -n "$(git -C "$root" status --porcelain -- . ":(exclude)$(git -C "$HERE" rev-parse --show-prefix)")" ]; then
       sha="$sha+local-changes"
     fi
     echo "$sha" >"$OUT_DIR/build/sha"
@@ -65,14 +65,6 @@ prepare_source() {
 build_artifact() {
   mkdir -p "$OUT_DIR/build/artifact"
   case "$SURFACE" in
-    node|mcp|cli)
-      log "build: npm pack"
-      docker_run -v "$OUT_DIR/build:/out" -v "$HERE/builders:/builders:ro" \
-        -e SURFACE -e PNPM_VERSION "$NODE_IMAGE" bash /builders/build-npm.sh >"$OUT_DIR/build/build.log" 2>&1 ;;
-    python)
-      log "build: the wheel"
-      docker_run -v "$OUT_DIR/build:/out" -v "$HERE/builders:/builders:ro" \
-        -e PY_BUILD_VERSION "$PYTHON_IMAGE" bash /builders/build-python.sh >"$OUT_DIR/build/build.log" 2>&1 ;;
     go)
       # Go has no artifact: the clean container runs `go get` at a pushed commit, as a user would.
       local sha; sha="$(cat "$OUT_DIR/build/sha")"
@@ -87,7 +79,7 @@ build_artifact() {
 run_checks() {
   rm -rf "$OUT_DIR/results"; mkdir -p "$OUT_DIR/results"
   local image
-  case "$SURFACE" in node|mcp|cli) image="$NODE_IMAGE" ;; python) image="$PYTHON_IMAGE" ;; go) image="$GO_IMAGE" ;; esac
+  case "$SURFACE" in go) image="$GO_IMAGE" ;; esac
   log "checks: a clean $image"
   local rc=0
   docker_run --init \
