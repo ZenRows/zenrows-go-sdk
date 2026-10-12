@@ -95,7 +95,7 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
 - `WithTimeout` (defaults to 30s) bounds each HTTP request. For `Download` it bounds the wait for
   the response headers, not the reading of the stream. A request that runs out is a network error.
 - `WithRetries` (defaults to 3): transient failures, 429/502/503/504 and network errors, are
-  retried on idempotent requests with jittered exponential backoff honoring `Retry-After`.
+  retried on idempotent requests with jittered exponential backoff honoring `Retry-After` (waiting at most 30 seconds).
   `Create` is retried only when `CreateParams.IdempotencyKey` is set, and never on a 429.
 
 ## Methods

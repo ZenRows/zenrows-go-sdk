@@ -472,12 +472,60 @@ func TestWaitBoundsAHungPollByItsTimeout(t *testing.T) {
 	})
 
 	start := time.Now()
-	got, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{Timeout: 50 * time.Millisecond})
-	if err != nil || got.Status != crawl.StatusRunning {
-		t.Fatalf("crawl = %+v, err = %v; want the running crawl and no error", got, err)
-	}
+	within(t, 5*time.Second, func() {
+		got, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{Timeout: 50 * time.Millisecond})
+		if err != nil || got.Status != crawl.StatusRunning {
+			t.Errorf("crawl = %+v, err = %v; want the running crawl and no error", got, err)
+		}
+	})
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("Wait returned after %s, want about 50ms", elapsed)
+	}
+}
+
+// within fails the test when fn has not returned after d, instead of letting a broken
+// timeout hang the whole test binary.
+func within(t *testing.T, d time.Duration, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+		t.Fatalf("still running after %s", d)
+	}
+}
+
+func TestWaitBoundsAHungFirstReadByItsTimeout(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+
+	within(t, 5*time.Second, func() {
+		_, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{Timeout: 50 * time.Millisecond})
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("err = %v (%T), want context.DeadlineExceeded from the wait's own timeout", err, err)
+		}
+	})
+}
+
+func TestRetryAfterWaitIsCappedAt30Seconds(t *testing.T) {
+	for raw, want := range map[string]time.Duration{
+		"1":    time.Second,
+		"30":   30 * time.Second,
+		"3600": 30 * time.Second,
+	} {
+		if got, ok := crawl.RetryAfterWait(raw); !ok || got != want {
+			t.Errorf("RetryAfterWait(%q) = %s, %v; want %s", raw, got, ok, want)
+		}
+	}
+	for _, raw := range []string{"", "-1", "soon"} {
+		if _, ok := crawl.RetryAfterWait(raw); ok {
+			t.Errorf("RetryAfterWait(%q) accepted an invalid header", raw)
+		}
 	}
 }
 
@@ -488,10 +536,12 @@ func TestWaitReturnsCallerCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := client.Wait(ctx, testCrawlID, crawl.WaitOptions{Timeout: time.Minute})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v (%T), want the caller's context.DeadlineExceeded", err, err)
-	}
+	within(t, 5*time.Second, func() {
+		_, err := client.Wait(ctx, testCrawlID, crawl.WaitOptions{Timeout: time.Minute})
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("err = %v (%T), want the caller's context.DeadlineExceeded", err, err)
+		}
+	})
 }
 
 func TestRequestTimeout(t *testing.T) {

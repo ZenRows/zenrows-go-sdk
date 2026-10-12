@@ -57,8 +57,15 @@ func backoffDuration(attempt int) time.Duration {
 	return time.Duration(jittered) * time.Millisecond
 }
 
-func retryAfterDuration(res *resty.Response) (time.Duration, bool) {
-	return parseRetryAfter(res.Header().Get("Retry-After"))
+// maxRetryAfterWait bounds the wait a Retry-After can ask for, so a large server value cannot
+// hang a call; APIError.RetryAfter still reports the value the server sent.
+const maxRetryAfterWait = 30 * time.Second
+
+// retryAfterWait is how long to wait before a retry the response asks to delay, at most
+// maxRetryAfterWait.
+func retryAfterWait(raw string) (time.Duration, bool) {
+	wait, ok := parseRetryAfter(raw)
+	return min(wait, maxRetryAfterWait), ok
 }
 
 // parseRetryAfter reads a Retry-After header given in seconds.
@@ -75,7 +82,7 @@ func parseRetryAfter(raw string) (time.Duration, bool) {
 
 // executeWithRetry sends req via method+path, retrying transient failures (429 except on
 // POST, 502/503/504, or a network error) up to maxRetries times with jittered exponential
-// backoff (honoring Retry-After when present). Only idempotent requests are replayed: GET/PUT/DELETE/HEAD/
+// backoff (honoring Retry-After when present, up to 30s). Only idempotent requests are replayed: GET/PUT/DELETE/HEAD/
 // OPTIONS, plus POST when the caller supplied an Idempotency-Key header. Cancellation of ctx is
 // never retried: the caller set that budget.
 //
@@ -111,7 +118,7 @@ func executeWithRetry(
 			closeRawBody(res)
 			cancel()
 			var ok bool
-			if wait, ok = retryAfterDuration(res); !ok {
+			if wait, ok = retryAfterWait(res.Header().Get("Retry-After")); !ok {
 				wait = backoffDuration(attempt)
 			}
 		default:

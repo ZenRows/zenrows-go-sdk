@@ -8,3 +8,6 @@ func SetWaitPollInterval(d time.Duration) (restore func()) {
 	waitPollInterval, waitMaxPollInterval = d, d
 	return func() { waitPollInterval, waitMaxPollInterval = interval, maxInterval }
 }
+
+// RetryAfterWait exposes the wait a Retry-After header asks for before a retry.
+func RetryAfterWait(raw string) (time.Duration, bool) { return retryAfterWait(raw) }

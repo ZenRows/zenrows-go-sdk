@@ -9,7 +9,7 @@ const defaultBaseURL = "https://api.zenrows.com/v1"
 
 // defaultRetries bounds automatic retries of transient failures (HTTP 429/502/503/504 and
 // network errors) on idempotent requests. Create never retries a 429. Retries use jittered
-// exponential backoff and honor Retry-After; set WithRetries(0) to disable.
+// exponential backoff and honor Retry-After (at most 30s); set WithRetries(0) to disable.
 const defaultRetries = 3
 
 const defaultTimeout = 30 * time.Second
