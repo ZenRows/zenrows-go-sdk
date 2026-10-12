@@ -177,7 +177,7 @@ func (c *Client) List(ctx context.Context, opts ListOptions) (*ListResponse, err
 // Pages already in flight finish, so read the final coverage and results with Get.
 //
 // A 503 with Code() "crawl_busy" means the stop was not saved and the crawl is still running.
-// Stop retries it up to WithRetries times, waiting Retry-After each time, then returns it.
+// Stop retries it up to WithRetries times, waiting Retry-After (at most 30s) each time, then returns it.
 func (c *Client) Stop(ctx context.Context, crawlID string) (*StopResponse, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
@@ -195,11 +195,7 @@ func (c *Client) Stop(ctx context.Context, crawlID string) (*StopResponse, error
 			apiErr.Code() != codeCrawlBusy || attempt >= c.cfg.retries {
 			return nil, err
 		}
-		wait := apiErr.RetryAfter
-		if wait <= 0 {
-			wait = time.Second
-		}
-		if !sleepCtx(ctx, wait) {
+		if !sleepCtx(ctx, stopRetryWait(apiErr.RetryAfter)) {
 			return nil, ctx.Err()
 		}
 	}
@@ -299,4 +295,17 @@ func (c *Client) Download(ctx context.Context, crawlID string) (*Download, error
 		return nil, newAPIError(res.StatusCode(), res.Header(), raw)
 	}
 	return &Download{ReadCloser: body, Status: Status(res.Header().Get("X-Crawl-Status")), release: release}, nil
+}
+
+// maxStopRetryWait bounds the wait a crawl_busy Retry-After can ask for before Stop tries again,
+// so a large server value cannot hang the stop.
+const maxStopRetryWait = 30 * time.Second
+
+// stopRetryWait is how long Stop waits after a 503 crawl_busy: the Retry-After the server sent,
+// 1s when it sent none, and never more than maxStopRetryWait.
+func stopRetryWait(retryAfter time.Duration) time.Duration {
+	if retryAfter <= 0 {
+		return time.Second
+	}
+	return min(retryAfter, maxStopRetryWait)
 }

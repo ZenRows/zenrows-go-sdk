@@ -643,3 +643,16 @@ func TestResponseEnumsIsKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestStopRetryWaitIsCappedAt30Seconds(t *testing.T) {
+	for retryAfter, want := range map[time.Duration]time.Duration{
+		0:                time.Second,
+		2 * time.Second:  2 * time.Second,
+		time.Hour:        30 * time.Second,
+		30 * time.Second: 30 * time.Second,
+	} {
+		if got := crawl.StopRetryWait(retryAfter); got != want {
+			t.Errorf("StopRetryWait(%s) = %s, want %s", retryAfter, got, want)
+		}
+	}
+}
