@@ -610,3 +610,17 @@ func TestResponseEnumsIsKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestRequestsCarryTheClientsUserAgent(t *testing.T) {
+	var got string
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+		writeJSON(w, http.StatusOK, `{"crawls":[]}`)
+	})
+	if _, err := client.List(context.Background(), crawl.ListOptions{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(got, "zenrows-go-crawl/") {
+		t.Fatalf("User-Agent = %q, want it to start with zenrows-go-crawl/", got)
+	}
+}

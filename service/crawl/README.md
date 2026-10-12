@@ -39,7 +39,7 @@ func main() {
     ctx := context.Background()
 
     created, err := client.Create(ctx, crawl.CreateParams{
-        URL:             "https://example.com/products/",
+        URL:             "https://www.scrapingcourse.com/ecommerce/",
         Depth:           1,
         MaxItems:        20,
         MaxPages:        30,

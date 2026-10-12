@@ -23,12 +23,29 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 
 	"github.com/go-resty/resty/v2"
 )
 
 const apiKeyHeader = "X-API-Key" //nolint:gosec // header name, not a credential value
+
+const modulePath = "github.com/zenrows/zenrows-go-sdk/service/crawl"
+
+// userAgent names this client and the module version the program built against, so the API can
+// tell SDK traffic apart. A build that does not record the version (a local checkout) says "dev".
+func userAgent() string {
+	version := "dev"
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range info.Deps {
+			if dep.Path == modulePath && dep.Version != "" {
+				version = dep.Version
+			}
+		}
+	}
+	return "zenrows-go-crawl/" + version
+}
 
 // A download line holds a URL plus its page's HTML: read with a 64 KiB buffer that may grow
 // to maxDownloadLineBytes for one line.
@@ -52,7 +69,8 @@ func NewClient(opts ...Option) *Client {
 
 	client.http = resty.New().
 		SetBaseURL(client.cfg.baseURL).
-		SetHeader(apiKeyHeader, client.cfg.apiKey)
+		SetHeader(apiKeyHeader, client.cfg.apiKey).
+		SetHeader("User-Agent", userAgent())
 
 	return client
 }
