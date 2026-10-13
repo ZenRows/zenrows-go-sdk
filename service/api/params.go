@@ -171,7 +171,8 @@ type RequestParameters struct {
 
 	// DisableAdaptiveStealth disables Client.Extract's default behavior of sending Adaptive
 	// Stealth Mode (wire param "mode=auto") so a target needing JSRender/UsePremiumProxies
-	// doesn't escalate automatically. Extract-only; not sent to the API itself.
+	// doesn't escalate automatically. Extract already skips it when JSRender or
+	// UsePremiumProxies is set. Extract-only; not sent to the API itself.
 	DisableAdaptiveStealth bool `json:"-" structs:"-" schema:"-"`
 
 	JSONResponse bool         `json:"json_response,omitempty" structs:"json_response,omitempty" schema:"json_response"`

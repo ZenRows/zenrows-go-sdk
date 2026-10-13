@@ -142,6 +142,8 @@ if err != nil {
 fmt.Println("Response Body:", string(response.Body()))
 ```
 
+`Extract()` also sends [Adaptive Stealth Mode](https://docs.zenrows.com/fetch/features/adaptive-stealth-mode) (`mode=auto`) by default, except when you set `JSRender` or `UsePremiumProxies`: the API rejects either combined with Adaptive Stealth Mode, so your fixed configuration is sent as is. Set `DisableAdaptiveStealth` to turn it off entirely.
+
 A `422` with problem code `no_data_extracted` means Extract knows this kind of page but found no data on it. It isn't charged, and the client never retries it, even with `WithMaxRetryCount` set. `response.IsNoDataExtracted()` tells you when you got one. See the [Extract docs](https://docs.zenrows.com/extract/setup).
 
 ### Batch

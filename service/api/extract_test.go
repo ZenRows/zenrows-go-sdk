@@ -306,3 +306,83 @@ func contains(haystack, needle string) bool {
 	}
 	return false
 }
+
+func TestExtractSkipsAdaptiveStealthWithForcedRendering(t *testing.T) {
+	cases := map[string]*scraperapi.RequestParameters{
+		"JSRender":                {JSRender: true},
+		"UsePremiumProxies":       {UsePremiumProxies: true},
+		"js_render custom param":  {CustomParams: map[string]string{"js_render": "true"}},
+		"premium_proxy as custom": {CustomParams: map[string]string{"premium_proxy": "TRUE"}},
+	}
+	for name, params := range cases {
+		t.Run(name, func(t *testing.T) {
+			var gotQuery string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotQuery = r.URL.RawQuery
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
+
+			if _, err := client.Extract(context.Background(), "https://example.com", params); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if contains(gotQuery, "mode=") {
+				t.Fatalf("expected query to omit mode, got %q", gotQuery)
+			}
+		})
+	}
+}
+
+func TestExtractKeepsAdaptiveStealthWhenRenderingIsFalse(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
+
+	params := &scraperapi.RequestParameters{CustomParams: map[string]string{"js_render": "false"}}
+	if _, err := client.Extract(context.Background(), "https://example.com", params); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(gotQuery, "mode=auto") {
+		t.Fatalf("expected query to contain mode=auto, got %q", gotQuery)
+	}
+}
+
+func TestExtractFallbackSkipsAdaptiveStealthWithPremiumProxy(t *testing.T) {
+	var queries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		if len(queries) == 1 {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = w.Write([]byte(`{"code":"AUTH010","status":402}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
+
+	params := &scraperapi.RequestParameters{UsePremiumProxies: true}
+	if _, err := client.Extract(context.Background(), "https://example.com", params); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(queries) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(queries))
+	}
+	for i, q := range queries {
+		if contains(q, "mode=") {
+			t.Fatalf("expected request %d to omit mode, got %q", i+1, q)
+		}
+	}
+	if !contains(queries[1], "autoparse=true") {
+		t.Fatalf("expected the fallback request to set autoparse, got %q", queries[1])
+	}
+}

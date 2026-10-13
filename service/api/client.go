@@ -141,8 +141,9 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 // Extract also sends Adaptive Stealth Mode (wire param "mode=auto") by default on both the
 // extract attempt and the AutoParse fallback, so a target needing JSRender/
 // UsePremiumProxies (e.g. a site with heavy anti-bot defenses) escalates automatically
-// instead of failing with REQS002. Set params.DisableAdaptiveStealth to disable that and
-// set JSRender/UsePremiumProxies yourself.
+// instead of failing with REQS002. It is skipped when params sets JSRender or
+// UsePremiumProxies (the API rejects either combined with Adaptive Stealth Mode) or its own
+// Mode. Set params.DisableAdaptiveStealth to turn it off entirely.
 //
 // A 422 with problem code no_data_extracted means Extract knows this kind of page but found
 // no data on it. It is not charged and is never retried; check it with
@@ -155,7 +156,7 @@ func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestP
 	if extractParams.Extract == "" {
 		extractParams.Extract = ExtractModeAuto
 	}
-	if !extractParams.DisableAdaptiveStealth {
+	if addsAdaptiveStealth(&extractParams) {
 		extractParams.CustomParams = withCustomParam(extractParams.CustomParams, "mode", "auto")
 	}
 
@@ -175,6 +176,25 @@ func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestP
 	}
 
 	return response, nil
+}
+
+// addsAdaptiveStealth reports whether Extract should add the wire param "mode=auto". It
+// doesn't when the caller turned it off, already chose a mode (Mode or a "mode" custom
+// param), or forces JSRender / UsePremiumProxies (also as "js_render" / "premium_proxy"
+// custom params): the API rejects either one combined with Adaptive Stealth Mode.
+func addsAdaptiveStealth(p *RequestParameters) bool {
+	if p.DisableAdaptiveStealth || p.Mode != "" || p.JSRender || p.UsePremiumProxies {
+		return false
+	}
+	if _, ok := p.CustomParams["mode"]; ok {
+		return false
+	}
+	for _, key := range []string{"js_render", "premium_proxy"} {
+		if strings.EqualFold(strings.TrimSpace(p.CustomParams[key]), "true") {
+			return false
+		}
+	}
+	return true
 }
 
 // withCustomParam returns a copy of params with key=value added, without mutating the
