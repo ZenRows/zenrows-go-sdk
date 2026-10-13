@@ -53,7 +53,7 @@ websites with support for various configurations like JavaScript rendering, cust
 
 ### Batch API Service
 
-> The Batch API (beta) runs many URLs asynchronously as a job — submit once, and it tracks progress
+> The Batch API runs many URLs asynchronously as a job — submit once, and it tracks progress
 and serves results back to you. A job can stay **open** to accept tasks over time, or run as a
 one-shot batch with every task known upfront.
 
