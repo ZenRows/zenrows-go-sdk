@@ -40,7 +40,14 @@ func NewClient(opts ...Option) *Client {
 		SetRetryWaitTime(client.cfg.retryOptions.retryWaitTime).
 		SetRetryMaxWaitTime(client.cfg.retryOptions.retryMaxWaitTime).
 		AddRetryCondition(func(r *resty.Response, err error) bool {
-			return err != nil || slices.Contains(retryableStatusCodes, r.StatusCode())
+			if err != nil {
+				return true
+			}
+			// Extract's 422 no_data_extracted is a final answer: another try returns the same.
+			if isNoDataExtracted(r.StatusCode(), r.Body()) {
+				return false
+			}
+			return slices.Contains(retryableStatusCodes, r.StatusCode())
 		})
 
 	// if the maxConcurrentRequests is set, create a semaphore to limit the number of concurrent requests
@@ -136,6 +143,10 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 // UsePremiumProxies (e.g. a site with heavy anti-bot defenses) escalates automatically
 // instead of failing with REQS002. Set params.DisableAdaptiveStealth to disable that and
 // set JSRender/UsePremiumProxies yourself.
+//
+// A 422 with problem code no_data_extracted means Extract knows this kind of page but found
+// no data on it. It is not charged and is never retried; check it with
+// Response.IsNoDataExtracted.
 func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestParameters) (*Response, error) {
 	extractParams := RequestParameters{}
 	if params != nil {

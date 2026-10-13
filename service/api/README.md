@@ -142,6 +142,8 @@ if err != nil {
 fmt.Println("Response Body:", string(response.Body()))
 ```
 
+A `422` with problem code `no_data_extracted` means Extract knows this kind of page but found no data on it. It isn't charged, and the client never retries it, even with `WithMaxRetryCount` set. `response.IsNoDataExtracted()` tells you when you got one. See the [Extract docs](https://docs.zenrows.com/extract/setup).
+
 ### Batch
 
 For asynchronous, many-URL scraping jobs, see the separate [Batch API SDK](../batch/README.md) — it's a different service with its own base URL and lifecycle (open/closed jobs, runs, results), so it lives in its own Go module.
