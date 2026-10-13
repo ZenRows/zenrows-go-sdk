@@ -93,7 +93,7 @@ var AllScreenshotFormats = map[ScreenshotFormat]struct{}{
 }
 
 // ExtractMode selects the contract used by Extract — ZenRows' AI-powered structured
-// extraction (beta). See https://docs.zenrows.com/extract/setup for what each mode returns.
+// extraction. See https://docs.zenrows.com/extract/setup for what each mode returns.
 type ExtractMode string
 
 const (
@@ -159,7 +159,7 @@ type RequestParameters struct {
 	CSSExtractor string `json:"css_extractor,omitempty" structs:"css_extractor,omitempty" schema:"css_extractor"`
 
 	// Extract runs the request through Extract, ZenRows' AI-powered structured extraction
-	// (beta), instead of returning raw HTML. See ExtractMode for the available
+	// instead of returning raw HTML. See ExtractMode for the available
 	// contracts. Prefer Client.Extract, which sets this for you and defaults to ExtractModeAuto.
 	Extract ExtractMode `json:"extract,omitempty" structs:"extract,omitempty" schema:"extract"`
 

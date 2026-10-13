@@ -120,7 +120,7 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 }
 
 // Extract fetches the given target URL and runs it through Extract — ZenRows' AI-powered
-// structured extraction (beta). If params.Extract is unset, it defaults to
+// structured extraction. If params.Extract is unset, it defaults to
 // ExtractModeAuto. This is a thin wrapper over Get with the Extract param set — no separate
 // endpoint or auth.
 //

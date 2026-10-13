@@ -12,7 +12,7 @@ type IClient interface {
 	// ZenRows' "Fetch" product naming and for parity with the other ZenRows SDKs.
 	Fetch(ctx context.Context, targetURL string, params RequestParameters) (*Response, error)
 	// Extract fetches the given target URL and runs it through Extract, ZenRows' AI-powered
-	// structured extraction (beta).
+	// structured extraction.
 	Extract(ctx context.Context, targetURL string, params RequestParameters) (*Response, error)
 	// Post sends a POST request to the ZenRows Fetch API to scrape the given target URL using the specified parameters.
 	Post(ctx context.Context, targetURL string, params RequestParameters) (*Response, error)

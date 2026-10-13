@@ -47,7 +47,7 @@ and anti-bot mechanisms.
 
 The `service/api` SDK is a Go client for the ZenRows Fetch API, allowing developers to send HTTP requests to scrape 
 websites with support for various configurations like JavaScript rendering, custom headers, retries, and more.
-It also wraps [Extract](https://docs.zenrows.com/extract/introduction) (beta): `client.Extract()` returns a page
+It also wraps [Extract](https://docs.zenrows.com/extract/introduction): `client.Extract()` returns a page
 as structured JSON instead of raw HTML, on any domain ZenRows has prepared.
 
 - [Installation and Usage](./service/api/README.md)
