@@ -141,9 +141,9 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
   - 429 `too_many_crawls`: the account has reached its limit of active jobs (3 by default),
     shared with its Batch jobs. Nothing was created; retry after `APIError.RetryAfter`. `Create`
     does not retry it.
-  - 503 `crawl_busy`: the stop could not be saved yet; the crawl is still running. `Stop`
-    retries it up to `WithRetries` times, waiting `APIError.RetryAfter`, then returns it.
-    Repeating the stop is safe.
+  - 503 `crawl_busy`: the stop could not be saved yet; the crawl is still running. Repeating
+    the stop is safe, so `Stop` retries any 429, 502, 503 or 504 up to `WithRetries` times,
+    waiting `APIError.RetryAfter` (1s when absent, at most 30s), then returns it.
 - String enums on responses (`Status`, `StopReason`, `RunErrorCode`, `ContentStatus`) are
   extensible: the server may return values this SDK has no constant for. They decode without
   error, so always handle a default case; each type's `IsKnown()` reports whether a value is one

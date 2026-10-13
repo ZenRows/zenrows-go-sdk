@@ -55,7 +55,7 @@ func WithAPIKey(apiKey string) Option {
 
 // WithRetries configures how many times a transient failure (429/502/503/504, or a network
 // error) is retried on idempotent requests. Create never retries a 429. It also bounds the
-// retries of a Stop answered 503 "crawl_busy". Defaults to 3; pass 0 to disable.
+// retries of a Stop answered 429, 502, 503 or 504. Defaults to 3; pass 0 to disable.
 func WithRetries(retries int) Option {
 	return &funcOption{f: func(o *options) {
 		if retries < 0 {

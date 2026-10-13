@@ -307,19 +307,76 @@ func TestStopReturnsCrawlBusyAfterRetries(t *testing.T) {
 	}
 }
 
-func TestStopDoesNotRetryOther503(t *testing.T) {
+func TestStopRetriesTransientStatuses(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		status int
+		code   string
+	}{
+		"429":            {http.StatusTooManyRequests, "rate_limited"},
+		"502":            {http.StatusBadGateway, "bad_gateway"},
+		"503 other code": {http.StatusServiceUnavailable, "internal_error"},
+		"504":            {http.StatusGatewayTimeout, "gateway_timeout"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					writeProblem(w, tc.status, tc.code)
+					return
+				}
+				writeJSON(w, http.StatusOK, `{"crawl_id":"c_123","status":"stopped","stop_reason":"user"}`)
+			}, crawl.WithRetries(2))
+
+			within(t, 10*time.Second, func() {
+				got, err := client.Stop(context.Background(), testCrawlID)
+				if err != nil || got.Status != crawl.StatusStopped {
+					t.Errorf("stop = %+v, err = %v; want the stopped crawl", got, err)
+				}
+			})
+			if calls.Load() != 2 {
+				t.Fatalf("calls = %d, want 2", calls.Load())
+			}
+		})
+	}
+}
+
+func TestStopReturnsTheTransientErrorAfterRetries(t *testing.T) {
 	var calls atomic.Int32
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Retry-After", "0")
-		writeProblem(w, http.StatusServiceUnavailable, "internal_error")
-	}, crawl.WithRetries(2))
+		writeProblem(w, http.StatusBadGateway, "bad_gateway")
+	}, crawl.WithRetries(1))
 
-	if _, err := client.Stop(context.Background(), testCrawlID); err == nil {
-		t.Fatal("expected an error")
+	within(t, 10*time.Second, func() {
+		_, err := client.Stop(context.Background(), testCrawlID)
+		var apiErr crawl.APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadGateway || apiErr.Code() != "bad_gateway" {
+			t.Errorf("err = %v, want the 502 APIError", err)
+		}
+	})
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d, want 2", calls.Load())
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("calls = %d, want 1", calls.Load())
+}
+
+func TestStopDoesNotRetryOtherStatuses(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusNotFound} {
+		var calls atomic.Int32
+		client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			writeProblem(w, status, "other")
+		}, crawl.WithRetries(2))
+
+		if _, err := client.Stop(context.Background(), testCrawlID); err == nil {
+			t.Fatalf("%d: expected an error", status)
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("%d: calls = %d, want 1", status, calls.Load())
+		}
 	}
 }
 
@@ -564,10 +621,12 @@ func TestWaitReturnsTheRunningCrawlOnTimeout(t *testing.T) {
 		writeJSON(w, http.StatusOK, `{"crawl_id":"c_123","status":"running","results":[],"next_cursor":"x"}`)
 	})
 
-	got, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{Timeout: 30 * time.Millisecond})
-	if err != nil || got.CrawlID != testCrawlID || got.Status != crawl.StatusRunning {
-		t.Fatalf("crawl = %+v, err = %v; want the running crawl and no error", got, err)
-	}
+	within(t, 5*time.Second, func() {
+		got, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{Timeout: 30 * time.Millisecond})
+		if err != nil || got.CrawlID != testCrawlID || got.Status != crawl.StatusRunning {
+			t.Errorf("crawl = %+v, err = %v; want the running crawl and no error", got, err)
+		}
+	})
 }
 
 func TestWaitBoundsAHungPollByItsTimeout(t *testing.T) {
