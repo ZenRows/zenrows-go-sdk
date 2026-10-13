@@ -130,7 +130,7 @@ fmt.Println("Response Body:", response.String())
 
 ### Extract
 
-[Extract](https://docs.zenrows.com) (beta) runs a page through ZenRows' AI-powered structured extraction instead of returning raw HTML. Use `client.Extract()` — it's the same request as `Get()`/`Fetch()`, with `params.Extract` set for you (defaults to `scraperapi.ExtractModeAuto` when left empty; other values are `ExtractModeNative` and `ExtractModeStandard`).
+[Extract](https://docs.zenrows.com/extract/introduction) (beta) runs a page through ZenRows' AI-powered structured extraction instead of returning raw HTML. Use `client.Extract()` — it's the same request as `Get()`/`Fetch()`, with `params.Extract` set for you (defaults to `scraperapi.ExtractModeAuto` when left empty; other values are `ExtractModeNative` and `ExtractModeStandard`).
 
 ```go
 response, err := client.Extract(context.Background(), "https://httpbin.io/anything", nil) // extract: "auto"

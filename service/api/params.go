@@ -93,7 +93,7 @@ var AllScreenshotFormats = map[ScreenshotFormat]struct{}{
 }
 
 // ExtractMode selects the contract used by Extract — ZenRows' AI-powered structured
-// extraction (beta). See https://docs.zenrows.com for what each mode returns.
+// extraction (beta). See https://docs.zenrows.com/extract/setup for what each mode returns.
 type ExtractMode string
 
 const (
@@ -164,8 +164,9 @@ type RequestParameters struct {
 	Extract ExtractMode `json:"extract,omitempty" structs:"extract,omitempty" schema:"extract"`
 
 	// DisableAutoparseFallback disables Client.Extract's default behavior of retrying once
-	// with AutoParse when ExtractModeAuto hits a domain not yet enabled for the Extract beta
-	// (a 402 with problem code AUTH010). Extract-only; not sent to the API.
+	// with AutoParse when ExtractModeAuto hits the legacy domain-not-enabled error (a 402
+	// with problem code AUTH010). A 403 REQS007 (domain not prepared yet) is never retried.
+	// Extract-only; not sent to the API.
 	DisableAutoparseFallback bool `json:"-" structs:"-" schema:"-"`
 
 	// DisableAdaptiveStealth disables Client.Extract's default behavior of sending Adaptive

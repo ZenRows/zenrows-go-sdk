@@ -124,9 +124,11 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 // ExtractModeAuto. This is a thin wrapper over Get with the Extract param set — no separate
 // endpoint or auth.
 //
-// ExtractModeAuto is a domain-gated open beta: when the target domain isn't enabled yet,
-// the API returns a 402 with problem code AUTH010. By default Extract catches that and
-// retries once with AutoParse set instead of returning the error response — set
+// Extract works on any domain ZenRows has prepared, with any active API key. On a domain
+// that isn't prepared yet, ExtractModeAuto returns a 403 with problem code REQS007, and
+// Extract returns it as is: prepare the domain with POST /v1/extract/prepared-domains, or
+// set params.AutoParse yourself. On the legacy domain-not-enabled error (a 402 with problem
+// code AUTH010), Extract retries once with AutoParse set by default — set
 // params.DisableAutoparseFallback to get the raw AUTH010 response back instead.
 //
 // Extract also sends Adaptive Stealth Mode (wire param "mode=auto") by default on both the
