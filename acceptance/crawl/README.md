@@ -73,7 +73,7 @@ and signal checks.
 | 10 | Download | a status, and one line per result with `url`, `content_status`, `content` |
 | 11 | Stop | running → `stopped`, `stop_reason: user`; ended → answers as it ended |
 | 12 | Not found | 404 `crawl_not_found` (MCP, CLI: `CRAWL_NOT_FOUND` with `crawl_id` and `server_code`) |
-| 13 | Invalid input | `depth` 0 → 422 `invalid_parameter` (MCP, CLI: `CRAWL_INVALID_REQUEST`) |
+| 13 | Invalid input | an out-of-range `depth` (0 or less; the Go SDK sends -1, since it does not send 0) → 422 `invalid_parameter` (MCP, CLI: `CRAWL_INVALID_REQUEST`) |
 | 14 | Gated option | `output_format` json → 422 `invalid_parameter`; if it is accepted, the key is in a beta segment, not a bug |
 | 15 | Bad key | the key `invalid` → 401 (MCP, CLI: `AUTH_INVALID`) |
 | 16 | Errors carry the server code | SDKs: `code` holds it, empty when the body has none; MCP, CLI: `server_code` |
@@ -81,18 +81,22 @@ and signal checks.
 | 18 | Copy | Crawl is "new", never "beta"; one "still evolving" line; the 429 limit reads as the account's active jobs, shared with Batch |
 | 19 | Failed crawl | an include pattern that matches nothing ends `failed` with `no_items_found`; SDKs return it, not raise it; MCP and CLI say `ok: false` (CLI: exit 1, `CRAWL_FAILED`) |
 | 20 | Results after stop | the html crawl is stopped while its pages are still being fetched: reading its results ends at once (MCP and CLI: `partial: false`, no note to call again), and the same URLs come back once the pages in flight finish |
-| 21 | Documented defaults | a create without `max_pages` and `max_items` gets the default the docs state (10) |
+| 21 | Documented defaults | a create without `max_pages` and `max_items` gets the default the docs state (100) |
 
-Extra checks for this surface: the README example compiles as it is, and `Wait` returns within its `Timeout`.
+Extra checks for this surface: the README example compiles as it is, `Wait` returns within its `Timeout`, and a
+create without `Depth` is accepted and its crawl has no `Depth`.
 
 ## What it costs
 
-Every crawl uses `depth` 1 and `max_pages` 10 or less. A run starts five crawls: the README run,
-one URLs-only crawl, one idempotency crawl that is stopped at once, one html crawl that is
-stopped with its pages in flight (check 20), and one that keeps nothing (check 19). On the default `CRAWL_URL`, a URLs-only crawl fetches 1 page and the
-html crawl 6, so a run costs about **10 pages**, and at most 50 if every crawl reaches its
-`max_pages`. Check 9 starts a sixth crawl, one html item, when the stop in check 20 lands
-before any page is fetched. It adds at most 10 pages. The report lists each crawl id and its `pages_fetched`.
+Every crawl uses `depth` 1 and `max_pages` 10 or less, with two exceptions. The crawl that
+keeps nothing (check 19) leaves `max_pages` out, so check 21 can read the default (100);
+`depth` 1 still bounds it. The Go extra that leaves `depth` out sets `max_pages` 1 and is stopped
+at once. A run starts six crawls: the README run, one URLs-only crawl, one idempotency crawl
+that is stopped at once, one html crawl that is stopped with its pages in flight (check 20), one
+that keeps nothing (check 19), and the one without `depth`. On the default `CRAWL_URL`, a
+URLs-only crawl fetches 1 page and the html crawl 6, so a run costs about **10 pages**, and at
+most 141 if every crawl reaches its `max_pages`. Check 9 starts a seventh crawl, one html item,
+when the stop in check 20 lands before any page is fetched. It adds at most 10 pages. The report lists each crawl id and its `pages_fetched`.
 
 An account can run 3 active jobs at once, shared with Batch jobs. A run has at most 2 crawls
 running at a time. If a create still gets a 429, the run waits `Retry-After` and tries again.

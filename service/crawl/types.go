@@ -109,12 +109,14 @@ const OutputFormatHTML OutputFormat = "html"
 type CreateParams struct {
 	// URL is the page the crawl starts from: an absolute http or https URL. Required.
 	URL string `json:"url"`
-	// Depth is how many link hops the crawl follows from URL, 1 to 100,000. Required.
-	Depth int `json:"depth"`
-	// MaxItems stops the crawl once it has kept this many URLs (API default 10).
+	// Depth is how many link hops the crawl follows from URL, 1 to 100,000. Leave it 0 for no
+	// depth limit: the crawl follows links until MaxPages or MaxItems stops it, or nothing is
+	// left to open.
+	Depth int `json:"depth,omitempty"`
+	// MaxItems stops the crawl once it has kept this many URLs, 1 to 100,000 (API default 100).
 	MaxItems int `json:"max_items,omitempty"`
-	// MaxPages stops the crawl once it has fetched this many pages (API default 10). It bounds
-	// what the crawl costs: each fetch is one request on your account.
+	// MaxPages stops the crawl once it has fetched this many pages, 1 to 100,000 (API default
+	// 100). It bounds what the crawl costs: each fetch is one request on your account.
 	MaxPages int `json:"max_pages,omitempty"`
 	// IncludePatterns keeps a URL only if it contains at least one of these substrings.
 	IncludePatterns []string `json:"include_patterns,omitempty"`
@@ -144,12 +146,14 @@ type RunError struct {
 
 // Crawl is one crawl: the parameters it runs with, its status and its coverage.
 type Crawl struct {
-	CrawlID           string       `json:"crawl_id"`
-	Status            Status       `json:"status"`
-	StopReason        StopReason   `json:"stop_reason,omitempty"`
-	Error             *RunError    `json:"error,omitempty"`
-	URL               string       `json:"url"`
-	Depth             int          `json:"depth"`
+	CrawlID    string     `json:"crawl_id"`
+	Status     Status     `json:"status"`
+	StopReason StopReason `json:"stop_reason,omitempty"`
+	Error      *RunError  `json:"error,omitempty"`
+	URL        string     `json:"url"`
+	// Depth is the link-hop limit the crawl was created with. Nil means no depth limit: the
+	// create left Depth out.
+	Depth             *int         `json:"depth,omitempty"`
 	MaxItems          int          `json:"max_items"`
 	MaxPages          int          `json:"max_pages"`
 	IncludePatterns   []string     `json:"include_patterns,omitempty"`

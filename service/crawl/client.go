@@ -32,10 +32,6 @@ import (
 
 const apiKeyHeader = "X-API-Key" //nolint:gosec // header name, not a credential value
 
-// codeCrawlBusy is the 503 a stop gets while the crawl is saving its own progress. Nothing was
-// saved and the crawl is still running, so the stop is safe to repeat after Retry-After.
-const codeCrawlBusy = "crawl_busy"
-
 const modulePath = "github.com/zenrows/zenrows-go-sdk/service/crawl"
 
 // userAgent names this client and the module version the program built against, so the API can
@@ -194,8 +190,9 @@ func (c *Client) List(ctx context.Context, opts ListOptions) (*ListResponse, err
 // Stopping a crawl that has already ended is not an error: it returns the crawl as it ended.
 // Pages already in flight finish, so read the final coverage and results with Get.
 //
-// A 503 with Code() "crawl_busy" means the stop was not saved and the crawl is still running.
-// Stop retries it up to WithRetries times, waiting Retry-After (at most 30s) each time, then returns it.
+// A stop is safe to repeat, so Stop retries a 429, 502, 503 or 504 up to WithRetries times,
+// waiting Retry-After (at most 30s, 1s when absent) each time, then returns the last APIError.
+// A 503 with Code() "crawl_busy" means the stop was not saved yet and the crawl is still running.
 func (c *Client) Stop(ctx context.Context, crawlID string) (*StopResponse, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
@@ -209,8 +206,7 @@ func (c *Client) Stop(ctx context.Context, crawlID string) (*StopResponse, error
 			return &result, nil
 		}
 		var apiErr APIError
-		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable ||
-			apiErr.Code() != codeCrawlBusy || attempt >= c.cfg.retries {
+		if !errors.As(err, &apiErr) || !retryableStatuses[apiErr.StatusCode] || attempt >= c.cfg.retries {
 			return nil, err
 		}
 		if !sleepCtx(ctx, stopRetryWait(apiErr.RetryAfter)) {
@@ -315,7 +311,7 @@ func (c *Client) Download(ctx context.Context, crawlID string) (*Download, error
 	return &Download{ReadCloser: body, Status: Status(res.Header().Get("X-Crawl-Status")), release: release}, nil
 }
 
-// stopRetryWait is how long Stop waits after a 503 crawl_busy: the Retry-After the server sent,
+// stopRetryWait is how long Stop waits before repeating a stop: the Retry-After the server sent,
 // 1s when it sent none, and never more than maxRetryAfterWait.
 func stopRetryWait(retryAfter time.Duration) time.Duration {
 	if retryAfter <= 0 {

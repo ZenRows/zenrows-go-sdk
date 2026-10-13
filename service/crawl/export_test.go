@@ -9,7 +9,7 @@ func SetWaitPollInterval(d time.Duration) (restore func()) {
 	return func() { waitPollInterval, waitMaxPollInterval = interval, maxInterval }
 }
 
-// StopRetryWait exposes how long Stop waits after a 503 crawl_busy.
+// StopRetryWait exposes how long Stop waits before repeating a stop.
 func StopRetryWait(retryAfter time.Duration) time.Duration { return stopRetryWait(retryAfter) }
 
 // RetryAfterWait exposes the wait a Retry-After header asks for before a retry.

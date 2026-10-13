@@ -8,11 +8,11 @@ This module is v0 (`service/crawl/v0.x`), so its API can change before v1.
 
 ## Model
 
-A **crawl** is one run from one start URL. It walks up to `Depth` link hops, keeps the URLs that
-match `IncludePatterns` (and none of `ExcludePatterns`), and stops at `MaxItems` kept URLs or
-`MaxPages` fetched pages. It runs asynchronously: `Create` returns at once with
-`StatusRunning`, and the crawl ends `StatusCompleted`, `StatusStopped` (you called `Stop`) or
-`StatusFailed` (`Crawl.Error` says why). With `OutputFormat: crawl.OutputFormatHTML`, each kept
+A **crawl** is one run from one start URL. It walks up to `Depth` link hops (no limit when you
+leave `Depth` out), keeps the URLs that match `IncludePatterns` (and none of `ExcludePatterns`),
+and stops at `MaxItems` kept URLs or `MaxPages` fetched pages (100 each by default). It runs
+asynchronously: `Create` returns at once with `StatusRunning`, and the crawl ends
+`StatusCompleted`, `StatusStopped` (you called `Stop`) or `StatusFailed` (`Crawl.Error` says why). With `OutputFormat: crawl.OutputFormatHTML`, each kept
 URL's page is fetched too. A crawl stays on the start URL's registrable domain; subdomains count.
 
 ## Installation
@@ -40,7 +40,7 @@ func main() {
 
     created, err := client.Create(ctx, crawl.CreateParams{
         URL:             "https://www.scrapingcourse.com/ecommerce/",
-        Depth:           1,
+        Depth:           1, // omit for no depth limit
         MaxItems:        20,
         MaxPages:        30,
         IncludePatterns: []string{"/product/"},
@@ -100,7 +100,8 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
 
 ## Methods
 
-- `Create(ctx, CreateParams)` starts a crawl. Only the fields you set are sent.
+- `Create(ctx, CreateParams)` starts a crawl. Only the fields you set are sent. Leave `Depth`
+  out for no depth limit; `Crawl.Depth` is then nil. `MaxItems` and `MaxPages` default to 100.
 - `Get(ctx, crawlID, GetOptions)` reads the crawl and one page of results. `NextCursor` is never
   nil while the crawl runs (polling with it returns only new URLs) and nil once the crawl has
   ended and the last page was read.
@@ -140,9 +141,9 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
   - 429 `too_many_crawls`: the account has reached its limit of active jobs (3 by default),
     shared with its Batch jobs. Nothing was created; retry after `APIError.RetryAfter`. `Create`
     does not retry it.
-  - 503 `crawl_busy`: the stop could not be saved yet; the crawl is still running. `Stop`
-    retries it up to `WithRetries` times, waiting `APIError.RetryAfter`, then returns it.
-    Repeating the stop is safe.
+  - 503 `crawl_busy`: the stop could not be saved yet; the crawl is still running. Repeating
+    the stop is safe, so `Stop` retries any 429, 502, 503 or 504 up to `WithRetries` times,
+    waiting `APIError.RetryAfter` (1s when absent, at most 30s), then returns it.
 - String enums on responses (`Status`, `StopReason`, `RunErrorCode`, `ContentStatus`) are
   extensible: the server may return values this SDK has no constant for. They decode without
   error, so always handle a default case; each type's `IsKnown()` reports whether a value is one
