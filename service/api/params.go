@@ -93,7 +93,7 @@ var AllScreenshotFormats = map[ScreenshotFormat]struct{}{
 }
 
 // ExtractMode selects the contract used by Extract — ZenRows' AI-powered structured
-// extraction (beta). See https://docs.zenrows.com for what each mode returns.
+// extraction. See https://docs.zenrows.com/extract/setup for what each mode returns.
 type ExtractMode string
 
 const (
@@ -159,18 +159,20 @@ type RequestParameters struct {
 	CSSExtractor string `json:"css_extractor,omitempty" structs:"css_extractor,omitempty" schema:"css_extractor"`
 
 	// Extract runs the request through Extract, ZenRows' AI-powered structured extraction
-	// (beta), instead of returning raw HTML. See ExtractMode for the available
+	// instead of returning raw HTML. See ExtractMode for the available
 	// contracts. Prefer Client.Extract, which sets this for you and defaults to ExtractModeAuto.
 	Extract ExtractMode `json:"extract,omitempty" structs:"extract,omitempty" schema:"extract"`
 
 	// DisableAutoparseFallback disables Client.Extract's default behavior of retrying once
-	// with AutoParse when ExtractModeAuto hits a domain not yet enabled for the Extract beta
-	// (a 402 with problem code AUTH010). Extract-only; not sent to the API.
+	// with AutoParse when ExtractModeAuto hits the legacy domain-not-enabled error (a 402
+	// with problem code AUTH010). A 403 REQS007 (domain not prepared yet) is never retried.
+	// Extract-only; not sent to the API.
 	DisableAutoparseFallback bool `json:"-" structs:"-" schema:"-"`
 
 	// DisableAdaptiveStealth disables Client.Extract's default behavior of sending Adaptive
 	// Stealth Mode (wire param "mode=auto") so a target needing JSRender/UsePremiumProxies
-	// doesn't escalate automatically. Extract-only; not sent to the API itself.
+	// doesn't escalate automatically. Extract already skips it when JSRender or
+	// UsePremiumProxies is set. Extract-only; not sent to the API itself.
 	DisableAdaptiveStealth bool `json:"-" structs:"-" schema:"-"`
 
 	JSONResponse bool         `json:"json_response,omitempty" structs:"json_response,omitempty" schema:"json_response"`

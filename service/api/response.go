@@ -60,6 +60,29 @@ func (r *Response) Problem() *problem.Problem {
 	return nil
 }
 
+// IsNoDataExtracted reports whether the response is Extract's 422 no_data_extracted: Extract
+// knows this kind of page but found no data on it. The request is not charged, and the
+// client never retries it.
+func (r *Response) IsNoDataExtracted() bool {
+	return isNoDataExtracted(r.StatusCode(), r.Body())
+}
+
+// isNoDataExtracted reports whether a status and body are Extract's 422 no_data_extracted.
+// It reads the code from the JSON body whatever the Content-Type, since the retry layer
+// sees the raw response.
+func isNoDataExtracted(status int, body []byte) bool {
+	if status != http.StatusUnprocessableEntity {
+		return false
+	}
+	var payload struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	return strings.EqualFold(payload.Code, "no_data_extracted")
+}
+
 // Error method returns the error message of the HTTP response if any.
 func (r *Response) Error() error {
 	if prob := r.Problem(); prob != nil {

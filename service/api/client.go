@@ -40,7 +40,14 @@ func NewClient(opts ...Option) *Client {
 		SetRetryWaitTime(client.cfg.retryOptions.retryWaitTime).
 		SetRetryMaxWaitTime(client.cfg.retryOptions.retryMaxWaitTime).
 		AddRetryCondition(func(r *resty.Response, err error) bool {
-			return err != nil || slices.Contains(retryableStatusCodes, r.StatusCode())
+			if err != nil {
+				return true
+			}
+			// Extract's 422 no_data_extracted is a final answer: another try returns the same.
+			if isNoDataExtracted(r.StatusCode(), r.Body()) {
+				return false
+			}
+			return slices.Contains(retryableStatusCodes, r.StatusCode())
 		})
 
 	// if the maxConcurrentRequests is set, create a semaphore to limit the number of concurrent requests
@@ -120,20 +127,27 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 }
 
 // Extract fetches the given target URL and runs it through Extract — ZenRows' AI-powered
-// structured extraction (beta). If params.Extract is unset, it defaults to
+// structured extraction. If params.Extract is unset, it defaults to
 // ExtractModeAuto. This is a thin wrapper over Get with the Extract param set — no separate
 // endpoint or auth.
 //
-// ExtractModeAuto is a domain-gated open beta: when the target domain isn't enabled yet,
-// the API returns a 402 with problem code AUTH010. By default Extract catches that and
-// retries once with AutoParse set instead of returning the error response — set
+// Extract works on any domain ZenRows has prepared, with any active API key. On a domain
+// that isn't prepared yet, ExtractModeAuto returns a 403 with problem code REQS007, and
+// Extract returns it as is: prepare the domain with POST /v1/extract/prepared-domains, or
+// set params.AutoParse yourself. On the legacy domain-not-enabled error (a 402 with problem
+// code AUTH010), Extract retries once with AutoParse set by default — set
 // params.DisableAutoparseFallback to get the raw AUTH010 response back instead.
 //
 // Extract also sends Adaptive Stealth Mode (wire param "mode=auto") by default on both the
 // extract attempt and the AutoParse fallback, so a target needing JSRender/
 // UsePremiumProxies (e.g. a site with heavy anti-bot defenses) escalates automatically
-// instead of failing with REQS002. Set params.DisableAdaptiveStealth to disable that and
-// set JSRender/UsePremiumProxies yourself.
+// instead of failing with REQS002. It is skipped when params sets JSRender or
+// UsePremiumProxies (the API rejects either combined with Adaptive Stealth Mode) or its own
+// Mode. Set params.DisableAdaptiveStealth to turn it off entirely.
+//
+// A 422 with problem code no_data_extracted means Extract knows this kind of page but found
+// no data on it. It is not charged and is never retried; check it with
+// Response.IsNoDataExtracted.
 func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestParameters) (*Response, error) {
 	extractParams := RequestParameters{}
 	if params != nil {
@@ -142,7 +156,7 @@ func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestP
 	if extractParams.Extract == "" {
 		extractParams.Extract = ExtractModeAuto
 	}
-	if !extractParams.DisableAdaptiveStealth {
+	if addsAdaptiveStealth(&extractParams) {
 		extractParams.CustomParams = withCustomParam(extractParams.CustomParams, "mode", "auto")
 	}
 
@@ -162,6 +176,25 @@ func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestP
 	}
 
 	return response, nil
+}
+
+// addsAdaptiveStealth reports whether Extract should add the wire param "mode=auto". It
+// doesn't when the caller turned it off, already chose a mode (Mode or a "mode" custom
+// param), or forces JSRender / UsePremiumProxies (also as "js_render" / "premium_proxy"
+// custom params): the API rejects either one combined with Adaptive Stealth Mode.
+func addsAdaptiveStealth(p *RequestParameters) bool {
+	if p.DisableAdaptiveStealth || p.Mode != "" || p.JSRender || p.UsePremiumProxies {
+		return false
+	}
+	if _, ok := p.CustomParams["mode"]; ok {
+		return false
+	}
+	for _, key := range []string{"js_render", "premium_proxy"} {
+		if strings.EqualFold(strings.TrimSpace(p.CustomParams[key]), "true") {
+			return false
+		}
+	}
+	return true
 }
 
 // withCustomParam returns a copy of params with key=value added, without mutating the
