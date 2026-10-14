@@ -83,6 +83,39 @@ the test waits for `Retry-After` and retries the create for up to 5 minutes befo
 This project adheres to the Contributor Covenant [code of conduct](./CODE_OF_CONDUCT.md). By participating, you are 
 expected to uphold this code. Please report unacceptable behavior to [us](https://www.zenrows.com/contact).
 
+## Releases
+
+Each module under `service/` (`api`, `batch`, `crawl`) has its own version and tags, for
+example `service/api/v1.2.3`.
+
+1. Merge PRs with Conventional Commit titles, for example `fix(crawl): ...` or
+   `feat(batch): ...`. `fix`, `feat` and `perf` need a scope. A `docs`, `chore`, `test`,
+   `ci`, `refactor`, `build` or `style` PR releases nothing.
+2. After each merge to `main`, release-please opens or updates one PR per changed module,
+   `chore: release service/<module> X.Y.Z`. It sets the version in
+   `.release-please-manifest.json`, and for `service/api` also in
+   `service/api/version/version.go`. Do not change these by hand. To release, merge that
+   PR. The workflow runs the module's checks, creates the tag `service/<module>/vX.Y.Z`
+   and the GitHub release, and makes the Go proxy fetch the new version. The `release`
+   environment has no reviewers.
+
+To verify an existing tag on the Go proxy again, run the Release workflow by hand from
+`main` with that tag.
+
+### If the checks fail after the release PR is merged
+
+The release PR runs no CI, so its checks first run after the merge. If they fail, `main`
+already has the new version, but there is no tag, and the merged release PR keeps the
+`autorelease: pending` label, which blocks the next release PR. To recover:
+
+1. Fix the problem in a normal PR and merge it.
+2. Create the release on that fix commit, with the module's version from
+   `.release-please-manifest.json`:
+   `gh release create service/<module>/vX.Y.Z --target <fix commit> --title "service/<module> vX.Y.Z" --generate-notes --notes-start-tag <previous tag of the module>`
+3. On the merged release PR, replace the label `autorelease: pending` with
+   `autorelease: tagged`.
+4. Run the Release workflow by hand from `main` with the tag `service/<module>/vX.Y.Z`.
+
 ## Thank You!
 
 Thank you for considering contributing to the ZenRows Go SDK! Feel free to reach out if you have any questions.
