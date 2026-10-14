@@ -58,11 +58,12 @@ type RunErrorCode string
 
 const (
 	RunErrorInsufficientCredits RunErrorCode = "insufficient_credits"
-	RunErrorAPIKeyCapReached    RunErrorCode = "api_key_cap_reached"
-	RunErrorSeedUnreachable     RunErrorCode = "seed_unreachable"
-	RunErrorDomainNotAllowed    RunErrorCode = "domain_not_allowed"
-	RunErrorNoItemsFound        RunErrorCode = "no_items_found"
-	RunErrorInternalError       RunErrorCode = "internal_error"
+	//nolint:gosec // G101: an error code the API answers with, not a credential.
+	RunErrorAPIKeyCapReached RunErrorCode = "api_key_cap_reached"
+	RunErrorSeedUnreachable  RunErrorCode = "seed_unreachable"
+	RunErrorDomainNotAllowed RunErrorCode = "domain_not_allowed"
+	RunErrorNoItemsFound     RunErrorCode = "no_items_found"
+	RunErrorInternalError    RunErrorCode = "internal_error"
 )
 
 // IsKnown reports whether c is one of the RunErrorCode constants this SDK version defines.
