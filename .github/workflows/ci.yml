@@ -9,6 +9,8 @@ name: Quality control checks
 # case.
 
 on:
+  # The release workflow starts CI on release PRs, which start no workflows themselves.
+  workflow_dispatch:
   pull_request:
     types: [ opened, synchronize, reopened ]
   push:
