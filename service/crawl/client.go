@@ -1,14 +1,14 @@
 // Package crawl is a client for the Zenrows Crawl API. Give it one start URL, and it walks the
-// links behind it and returns the URLs it keeps — optionally with each page's HTML. A crawl
-// stays on the start URL's registrable domain; subdomains count.
+// links behind it and returns the URLs it keeps — optionally with each page's content, as HTML
+// or Markdown. A crawl stays on the start URL's registrable domain; subdomains count.
 //
 // Crawl is still evolving: new features are coming, limits may be tuned, and the changelog
 // announces each change. This package is v0, and its API can change before v1.
 //
 // A crawl is a long-running job: Create starts it and returns at once, while it runs. Wait
 // blocks until it ends; Get reads its status, coverage and one page of results; Results
-// reads every result. Content and Download read the pages of a crawl created with
-// OutputFormatHTML. Stop ends a running crawl early. List lists the account's crawls.
+// reads every result. Content and Download read the pages of a crawl created with an
+// OutputFormat. Stop ends a running crawl early. List lists the account's crawls.
 //
 // The main entry point is Client (via NewClient).
 package crawl
@@ -215,17 +215,51 @@ func (c *Client) Stop(ctx context.Context, crawlID string) (*StopResponse, error
 	}
 }
 
-// Content fetches one kept URL's page (HTML for OutputFormatHTML). contentID is a content id or
-// a Result.ContentURL, present once the result's ContentStatus is ContentStatusFetched. The
+// contentOptions holds what the ContentOption values set.
+type contentOptions struct {
+	download bool
+}
+
+// ContentOption configures one Client.Content call.
+type ContentOption interface {
+	applyContent(*contentOptions)
+}
+
+type funcContentOption struct {
+	f func(*contentOptions)
+}
+
+func (fo *funcContentOption) applyContent(o *contentOptions) {
+	fo.f(o)
+}
+
+// AsDownload asks for the page as a file to save rather than one to show: the server sends
+// Content-Disposition: attachment with a file name built from the content id. The bytes Content
+// returns are the same either way.
+func AsDownload() ContentOption {
+	return &funcContentOption{f: func(o *contentOptions) { o.download = true }}
+}
+
+// Content fetches one kept URL's page, in the crawl's OutputFormat. contentID is a content id
+// or a Result.ContentURL, present once the result's ContentStatus is ContentStatusFetched. The
 // returned bytes are the raw page — unlike other methods here, this is not decoded as JSON.
-func (c *Client) Content(ctx context.Context, crawlID, contentID string) ([]byte, error) {
+// Pass AsDownload() to ask for it as a file to save.
+func (c *Client) Content(ctx context.Context, crawlID, contentID string, opts ...ContentOption) ([]byte, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
 	}
 
+	var cfg contentOptions
+	for _, opt := range opts {
+		opt.applyContent(&cfg)
+	}
 	contentID = contentID[strings.LastIndex(contentID, "/")+1:]
 	path := crawlPath(crawlID) + "/contents/" + url.PathEscape(contentID)
-	res, release, err := executeWithRetry(ctx, c.http.R(), http.MethodGet, path, c.cfg.retries, c.cfg.timeout)
+	req := c.http.R()
+	if cfg.download {
+		req.SetQueryParam("download", "true")
+	}
+	res, release, err := executeWithRetry(ctx, req, http.MethodGet, path, c.cfg.retries, c.cfg.timeout)
 	defer release()
 	if err != nil {
 		return nil, err
