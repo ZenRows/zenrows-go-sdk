@@ -803,7 +803,7 @@ func TestRequestsCarryTheClientsUserAgent(t *testing.T) {
 	if _, err := client.List(context.Background(), crawl.ListOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(got, "zenrows-go-crawl/") {
-		t.Fatalf("User-Agent = %q, want it to start with zenrows-go-crawl/", got)
+	if !strings.HasPrefix(got, "zenrows-go/") {
+		t.Fatalf("User-Agent = %q, want it to start with zenrows-go/", got)
 	}
 }
