@@ -134,8 +134,9 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 // Extract works on any prepared domain (you can prepare one yourself with
 // POST /v1/extract/prepared-domains), with any active API key. A 403 with problem code
 // REQS007 means the domain isn't prepared for Extract yet: prepare it with
-// POST /v1/extract/prepared-domains, or set params.AutoparseFallback to retry with
-// deprecated autoparse. The legacy domain-not-enabled error is a 402 with problem code
+// POST /v1/extract/prepared-domains (Client.PrepareDomain, then check it with
+// Client.PreparedDomainStatus), or set params.AutoparseFallback to retry with deprecated
+// autoparse. The legacy domain-not-enabled error is a 402 with problem code
 // AUTH010. By default Extract returns both responses to you as is, without a second request.
 //
 // params.AutoparseFallback (opt-in, default false) makes ExtractModeAuto retry once with
