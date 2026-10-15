@@ -144,6 +144,17 @@ fmt.Println("Response Body:", string(response.Body()))
 
 `Extract()` also sends [Adaptive Stealth Mode](https://docs.zenrows.com/fetch/features/adaptive-stealth-mode) (`mode=auto`) by default, except when you set `JSRender` or `UsePremiumProxies`: the API rejects either combined with Adaptive Stealth Mode, so your fixed configuration is sent as is. Set `DisableAdaptiveStealth` to turn it off entirely.
 
+Extract works on any prepared domain (you can prepare one yourself with `POST /v1/extract/prepared-domains`). A `403` with problem code `REQS007` means the domain isn't prepared for Extract yet: prepare it with `POST /v1/extract/prepared-domains`, or set `AutoparseFallback` to retry with deprecated autoparse. The legacy `402` with problem code `AUTH010` is handled the same way. By default `Extract()` returns both responses to you as is, without a second request.
+
+```go
+// Opt in to one retry with the deprecated autoparse on REQS007 / AUTH010.
+// The retry is a second, separately charged request.
+params := &scraperapi.RequestParameters{AutoparseFallback: true}
+response, err := client.Extract(context.Background(), url, params)
+```
+
+`DisableAutoparseFallback` is deprecated: the fallback is now off unless you set `AutoparseFallback`.
+
 A `422` with problem code `no_data_extracted` means Extract knows this kind of page but found no data on it. It isn't charged, and the client never retries it, even with `WithMaxRetryCount` set. `response.IsNoDataExtracted()` tells you when you got one. See the [Extract docs](https://docs.zenrows.com/extract/setup).
 
 ### Batch

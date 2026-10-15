@@ -2,6 +2,7 @@ package scraperapi_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -104,7 +105,8 @@ func TestExtractFallbackRequestAlsoCarriesAdaptiveStealth(t *testing.T) {
 
 	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
 
-	if _, err := client.Extract(context.Background(), "https://example.com", nil); err != nil {
+	params := &scraperapi.RequestParameters{AutoparseFallback: true}
+	if _, err := client.Extract(context.Background(), "https://example.com", params); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !contains(secondQuery, "mode=auto") {
@@ -138,163 +140,148 @@ func TestValidateRejectsInvalidExtractMode(t *testing.T) {
 	}
 }
 
-func TestExtractFallsBackToAutoparseOnAuth010(t *testing.T) {
-	var calls int
-	var secondQuery string
+// problemResponse is one canned answer from the fake API.
+type problemResponse struct {
+	status int
+	body   string
+}
+
+// extractAgainst runs Client.Extract against a fake API that answers each request from
+// responses in order (repeating the last one) and returns the response and every query sent.
+func extractAgainst(
+	t *testing.T, params *scraperapi.RequestParameters, responses ...problemResponse,
+) (*scraperapi.Response, []string) {
+	t.Helper()
+	var queries []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if calls == 1 {
+		queries = append(queries, r.URL.RawQuery)
+		next := responses[min(len(queries), len(responses))-1]
+		if next.status >= http.StatusBadRequest {
 			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(http.StatusPaymentRequired)
-			_, _ = w.Write([]byte(`{"code":"AUTH010","title":"Domain not enabled","status":402}`))
-			return
 		}
-		secondQuery = r.URL.RawQuery
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(next.status)
+		_, _ = w.Write([]byte(next.body))
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
-
-	res, err := client.Extract(context.Background(), "https://example.com", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !res.IsSuccess() {
-		t.Fatalf("expected the fallback response to succeed, got status %d", res.StatusCode())
-	}
-	if calls != 2 {
-		t.Fatalf("expected 2 requests (extract + autoparse fallback), got %d", calls)
-	}
-	if !contains(secondQuery, "autoparse=true") {
-		t.Fatalf("expected fallback request to set autoparse=true, got %q", secondQuery)
-	}
-	if contains(secondQuery, "extract=") {
-		t.Fatalf("expected fallback request to drop the extract param, got %q", secondQuery)
-	}
-}
-
-// REQS007 means the domain isn't prepared for Extract yet. The caller has to see it, so
-// they can prepare the domain; retrying with AutoParse would hide it and charge them for it.
-func TestExtractReturnsReqs007WithoutFallingBack(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"code":"REQS007","title":"Domain not prepared for Extract","status":403}`))
-	}))
-	defer server.Close()
-
-	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
-
-	res, err := client.Extract(context.Background(), "https://example.com", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if res.StatusCode() != http.StatusForbidden {
-		t.Fatalf("expected the raw 403 REQS007 to be returned, got status %d", res.StatusCode())
-	}
-	if calls != 1 {
-		t.Fatalf("REQS007 must not trigger an AutoParse fallback, got %d requests", calls)
-	}
-}
-
-func TestExtract403DoesNotFallBack(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"code":"AUTH002","title":"Invalid API key","status":403}`))
-	}))
-	defer server.Close()
-
-	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
-
-	res, err := client.Extract(context.Background(), "https://example.com", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if res.StatusCode() != http.StatusForbidden {
-		t.Fatalf("expected the raw 403 to be returned, got status %d", res.StatusCode())
-	}
-	if calls != 1 {
-		t.Fatalf("a 403 (e.g. a bad key) must not trigger a fallback, got %d requests", calls)
-	}
-}
-
-func TestExtractFallbackDisabledReturnsAuth010Response(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusPaymentRequired)
-		_, _ = w.Write([]byte(`{"code":"AUTH010","status":402}`))
-	}))
-	defer server.Close()
-
-	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
-
-	params := &scraperapi.RequestParameters{DisableAutoparseFallback: true}
 	res, err := client.Extract(context.Background(), "https://example.com", params)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.StatusCode() != http.StatusPaymentRequired {
-		t.Fatalf("expected the raw 402 to be returned, got status %d", res.StatusCode())
-	}
-	if calls != 1 {
-		t.Fatalf("expected fallback to be disabled (1 request), got %d", calls)
+	return res, queries
+}
+
+var (
+	reqs007 = problemResponse{http.StatusForbidden, `{"code":"REQS007","title":"Domain not prepared for Extract","status":403}`}
+	auth010 = problemResponse{http.StatusPaymentRequired, `{"code":"AUTH010","title":"Domain not enabled","status":402}`}
+	okBody  = problemResponse{http.StatusOK, `[{"found":"via autoparse"}]`}
+)
+
+// REQS007 means the domain isn't prepared for Extract yet. The caller has to see it, so they
+// can prepare the domain; retrying with AutoParse by default would hide it and charge them for it.
+func TestExtractReturnsDomainUnavailableWithoutFallbackByDefault(t *testing.T) {
+	for name, notReady := range map[string]problemResponse{"REQS007": reqs007, "AUTH010": auth010} {
+		t.Run(name, func(t *testing.T) {
+			res, queries := extractAgainst(t, nil, notReady, okBody)
+
+			if res.StatusCode() != notReady.status {
+				t.Fatalf("expected the raw %d to be returned, got status %d", notReady.status, res.StatusCode())
+			}
+			if len(queries) != 1 {
+				t.Fatalf("%s must not trigger an AutoParse fallback by default, got %d requests", name, len(queries))
+			}
+			if contains(queries[0], "autoparse") {
+				t.Fatalf("expected no autoparse param, got %q", queries[0])
+			}
+		})
 	}
 }
 
-func TestExtract402WithoutAuth010DoesNotFallBack(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusPaymentRequired)
-		_, _ = w.Write([]byte(`{"code":"AUTH004","title":"No credit available","status":402}`))
-	}))
-	defer server.Close()
+func TestExtractAutoparseFallbackRetriesOnce(t *testing.T) {
+	for name, notReady := range map[string]problemResponse{"REQS007": reqs007, "AUTH010": auth010} {
+		t.Run(name, func(t *testing.T) {
+			params := &scraperapi.RequestParameters{AutoparseFallback: true}
+			res, queries := extractAgainst(t, params, notReady, okBody)
 
-	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
+			if !res.IsSuccess() {
+				t.Fatalf("expected the fallback response to succeed, got status %d", res.StatusCode())
+			}
+			if len(queries) != 2 {
+				t.Fatalf("expected 2 requests (extract + autoparse fallback), got %d", len(queries))
+			}
+			if !contains(queries[1], "autoparse=true") {
+				t.Fatalf("expected fallback request to set autoparse=true, got %q", queries[1])
+			}
+			if contains(queries[1], "extract=") {
+				t.Fatalf("expected fallback request to drop the extract param, got %q", queries[1])
+			}
+		})
+	}
+}
 
-	res, err := client.Extract(context.Background(), "https://example.com", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestExtractAutoparseFallbackDoesNotRetryTwice(t *testing.T) {
+	params := &scraperapi.RequestParameters{AutoparseFallback: true}
+	res, queries := extractAgainst(t, params, reqs007)
+
+	if res.StatusCode() != http.StatusForbidden {
+		t.Fatalf("expected the failed fallback's 403 to be returned, got status %d", res.StatusCode())
 	}
-	if res.StatusCode() != http.StatusPaymentRequired {
-		t.Fatalf("expected the raw 402 to be returned, got status %d", res.StatusCode())
+	if len(queries) != 2 {
+		t.Fatalf("expected exactly one fallback (2 requests), got %d", len(queries))
 	}
-	if calls != 1 {
-		t.Fatalf("a non-AUTH010 402 (e.g. out of credits) must not trigger a fallback, got %d requests", calls)
+}
+
+func TestExtractOther4xxNeverFallBack(t *testing.T) {
+	cases := map[string]problemResponse{
+		"403 bad key":         {http.StatusForbidden, `{"code":"AUTH002","title":"Invalid API key","status":403}`},
+		"402 out of credits":  {http.StatusPaymentRequired, `{"code":"AUTH004","title":"No credit available","status":402}`},
+		"REQS007 on a 400":    {http.StatusBadRequest, `{"code":"REQS007","status":400}`},
+		"AUTH010 on a 403":    {http.StatusForbidden, `{"code":"AUTH010","status":403}`},
+		"404 without problem": {http.StatusNotFound, `{}`},
+	}
+	for name, other := range cases {
+		for _, fallback := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/AutoparseFallback=%t", name, fallback), func(t *testing.T) {
+				params := &scraperapi.RequestParameters{AutoparseFallback: fallback}
+				res, queries := extractAgainst(t, params, other, okBody)
+
+				if res.StatusCode() != other.status {
+					t.Fatalf("expected the raw %d to be returned, got status %d", other.status, res.StatusCode())
+				}
+				if len(queries) != 1 {
+					t.Fatalf("expected no fallback, got %d requests", len(queries))
+				}
+			})
+		}
 	}
 }
 
 func TestExtractNoFallbackForNonAutoMode(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusPaymentRequired)
-		_, _ = w.Write([]byte(`{"code":"AUTH010","status":402}`))
-	}))
-	defer server.Close()
+	params := &scraperapi.RequestParameters{Extract: scraperapi.ExtractModeNative, AutoparseFallback: true}
+	res, queries := extractAgainst(t, params, auth010, okBody)
 
-	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
-
-	params := &scraperapi.RequestParameters{Extract: scraperapi.ExtractModeNative}
-	res, err := client.Extract(context.Background(), "https://example.com", params)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	if res.StatusCode() != http.StatusPaymentRequired {
 		t.Fatalf("expected the raw 402 to be returned, got status %d", res.StatusCode())
 	}
-	if calls != 1 {
-		t.Fatalf("AUTH010 should only trigger a fallback for the auto mode, got %d requests", calls)
+	if len(queries) != 1 {
+		t.Fatalf("AUTH010 should only trigger a fallback for the auto mode, got %d requests", len(queries))
+	}
+}
+
+// The deprecated DisableAutoparseFallback still compiles and still wins over AutoparseFallback.
+func TestExtractDeprecatedDisableAutoparseFallbackStillWins(t *testing.T) {
+	params := &scraperapi.RequestParameters{
+		AutoparseFallback:        true,
+		DisableAutoparseFallback: true,
+	}
+	res, queries := extractAgainst(t, params, auth010, okBody)
+
+	if res.StatusCode() != http.StatusPaymentRequired {
+		t.Fatalf("expected the raw 402 to be returned, got status %d", res.StatusCode())
+	}
+	if len(queries) != 1 {
+		t.Fatalf("expected fallback to be disabled (1 request), got %d", len(queries))
 	}
 }
 
@@ -370,7 +357,7 @@ func TestExtractFallbackSkipsAdaptiveStealthWithPremiumProxy(t *testing.T) {
 
 	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
 
-	params := &scraperapi.RequestParameters{UsePremiumProxies: true}
+	params := &scraperapi.RequestParameters{UsePremiumProxies: true, AutoparseFallback: true}
 	if _, err := client.Extract(context.Background(), "https://example.com", params); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
