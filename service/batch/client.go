@@ -17,12 +17,29 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 )
 
 const apiKeyHeader = "X-API-Key" //nolint:gosec // header name, not a credential value
+
+const modulePath = "github.com/zenrows/zenrows-go-sdk/service/batch"
+
+// userAgent names this client and the module version the program built against, so the API can
+// tell SDK traffic apart. A build that does not record the version (a local checkout) says "dev".
+func userAgent() string {
+	version := "dev"
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range info.Deps {
+			if dep.Path == modulePath && dep.Version != "" {
+				version = dep.Version
+			}
+		}
+	}
+	return "zenrows-go-batch/" + version
+}
 
 // Client is the Zenrows Batch API client.
 type Client struct {
@@ -39,7 +56,11 @@ func NewClient(opts ...Option) *Client {
 
 	client.http = resty.New().
 		SetBaseURL(client.cfg.baseURL).
+		SetHeader("User-Agent", userAgent()).
 		SetHeader(apiKeyHeader, client.cfg.apiKey)
+	if client.cfg.timeout > 0 {
+		client.http.SetTimeout(client.cfg.timeout)
+	}
 
 	return client
 }
@@ -183,17 +204,20 @@ func (c *Client) DeleteJob(ctx context.Context, jobID string) error {
 	return c.deleteJob(ctx, jobID)
 }
 
-func (c *Client) postTasks(ctx context.Context, jobID string, tasks []Task, lastBatch bool) (*AddTasksResponse, error) {
+func (c *Client) postTasks(ctx context.Context, jobID string, tasks []Task, opts AddTasksOptions) (*AddTasksResponse, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
 	}
 	var result AddTasksResponse
 	path := fmt.Sprintf("/jobs/%s/tasks", jobID)
 	body := map[string]any{"tasks": tasks}
-	if lastBatch {
+	if opts.LastBatch {
 		body["last_batch"] = true
 	}
 	req := c.request(ctx, &result).SetBody(body)
+	if opts.IdempotencyKey != "" {
+		req.SetHeader("Idempotency-Key", opts.IdempotencyKey)
+	}
 	if err := c.do(ctx, req, http.MethodPost, path); err != nil {
 		return nil, err
 	}
@@ -203,7 +227,27 @@ func (c *Client) postTasks(ctx context.Context, jobID string, tasks []Task, last
 // AddTasks appends tasks to an open job's initial run. Fails once the job has been closed.
 // Pass lastBatch=true to close the job as part of this call.
 func (c *Client) AddTasks(ctx context.Context, jobID string, tasks []Task, lastBatch bool) (*AddTasksResponse, error) {
-	return c.postTasks(ctx, jobID, tasks, lastBatch)
+	return c.postTasks(ctx, jobID, tasks, AddTasksOptions{LastBatch: lastBatch})
+}
+
+// AddTasksOptions configures Client.AddTasksWithOptions / JobRef.AddTasksWithOptions.
+type AddTasksOptions struct {
+	// LastBatch closes the job as part of this call.
+	LastBatch bool
+	// IdempotencyKey (up to 128 characters) makes the call safe to retry. Once the first call
+	// has finished, a retry with the same key and the same body, within the key's 24-hour
+	// lifetime, returns the original response instead of appending the tasks again. The API
+	// checks the key right after confirming the job exists and is yours, before any check on
+	// the job's state, so the replay comes back even if the job has since been closed. A retry
+	// with a different body, or one sent while the first call is still running, gets a 409
+	// idempotency_key_conflict. With a key set, transient failures are retried automatically.
+	IdempotencyKey string
+}
+
+// AddTasksWithOptions is AddTasks with an Idempotency-Key. Without a key every call appends
+// its tasks, so a call whose response was lost can't be retried safely.
+func (c *Client) AddTasksWithOptions(ctx context.Context, jobID string, tasks []Task, opts AddTasksOptions) (*AddTasksResponse, error) {
+	return c.postTasks(ctx, jobID, tasks, opts)
 }
 
 func (c *Client) postClose(ctx context.Context, jobID string) (Job, error) {
@@ -416,9 +460,6 @@ func (c *Client) GetResults(ctx context.Context, jobID string, opts GetResultsOp
 	if opts.Cursor != "" {
 		req.SetQueryParam("cursor", opts.Cursor)
 	}
-	if opts.Limit > 0 {
-		req.SetQueryParam("limit", fmt.Sprintf("%d", opts.Limit))
-	}
 	if err := c.do(ctx, req, http.MethodGet, path); err != nil {
 		return nil, err
 	}
@@ -430,7 +471,7 @@ func (c *Client) IterResults(ctx context.Context, jobID string, opts GetResultsO
 	return func(yield func(TaskResult, error) bool) {
 		cursor := opts.Cursor
 		for {
-			page, err := c.GetResults(ctx, jobID, GetResultsOptions{RunID: opts.RunID, Status: opts.Status, Limit: opts.Limit, Cursor: cursor})
+			page, err := c.GetResults(ctx, jobID, GetResultsOptions{RunID: opts.RunID, Status: opts.Status, Cursor: cursor})
 			if err != nil {
 				var zero TaskResult
 				yield(zero, err)

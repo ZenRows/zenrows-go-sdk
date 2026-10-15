@@ -2,7 +2,6 @@ package batch
 
 import (
 	"context"
-	"errors"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -64,8 +63,10 @@ func retryAfterDuration(res *resty.Response) (time.Duration, bool) {
 // executeWithRetry sends req via method+path, retrying transient failures (429/502/503/504,
 // or a network error) up to maxRetries times with jittered exponential backoff (honoring
 // Retry-After when present). Only idempotent requests are replayed: GET/PUT/DELETE/HEAD/
-// OPTIONS, plus POST when the caller supplied an Idempotency-Key header. Context
-// cancellation/timeout is never retried — the caller set that budget.
+// OPTIONS, plus POST when the caller supplied an Idempotency-Key header. A request that runs
+// out of the client's per-request timeout (WithTimeout) is a network error and is retried
+// like one; cancellation or expiry of the caller's ctx is never retried, since the caller set
+// that budget.
 func executeWithRetry(ctx context.Context, req *resty.Request, method, path string, maxRetries int) (*resty.Response, error) {
 	idempotent := idempotentMethods[method] || (method == http.MethodPost && hasIdempotencyKey(req))
 
@@ -73,7 +74,7 @@ func executeWithRetry(ctx context.Context, req *resty.Request, method, path stri
 	for {
 		res, err := req.Execute(method, path)
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			if ctx.Err() != nil {
 				return res, err
 			}
 			if idempotent && attempt < maxRetries {

@@ -102,7 +102,14 @@ func (r JobRef) RetryFailed(ctx context.Context, opts RetryFailedOptions) (RunHa
 
 // AddTasks appends to the open initial run.
 func (r JobRef) AddTasks(ctx context.Context, tasks []Task, lastBatch bool) (*AddTasksResponse, error) {
-	return r.client.postTasks(ctx, r.jobID, tasks, lastBatch)
+	return r.client.postTasks(ctx, r.jobID, tasks, AddTasksOptions{LastBatch: lastBatch})
+}
+
+// AddTasksWithOptions appends to the open initial run, with an optional Idempotency-Key so a
+// retried call doesn't append the same tasks twice (see AddTasksOptions.IdempotencyKey for when
+// a retry replays and when it conflicts).
+func (r JobRef) AddTasksWithOptions(ctx context.Context, tasks []Task, opts AddTasksOptions) (*AddTasksResponse, error) {
+	return r.client.postTasks(ctx, r.jobID, tasks, opts)
 }
 
 // Runs auto-paginates runs of this job, yielding (RunHandle, error) pairs. To address a
@@ -264,17 +271,17 @@ type RunHandle struct {
 }
 
 // Status is this run's status. Shortcut for Data.Status.
-func (h RunHandle) Status() RunStatus { return h.Data.Status }
+func (h RunHandle) Status() RunStatus { return h.Data.Status } //nolint:gocritic // value receiver kept so existing callers keep compiling
 
 // Stats is this run's task rollup. Shortcut for Data.Stats.
-func (h RunHandle) Stats() RunStats { return h.Data.Stats }
+func (h RunHandle) Stats() RunStats { return h.Data.Stats } //nolint:gocritic // value receiver kept so existing callers keep compiling
 
 // ======================= ExportRef / ExportHandle =======================
 
 // ExportRef is a reference to a results export by id. A results export is async:
 // StartResultsExport returns immediately with a pending ref; the server zips the run in the
 // background and it reaches completed (download URL ready) or failed (with an error message
-// — e.g. the 1 GiB size cap). Call Load / Wait for an ExportHandle with data.
+// (e.g. the run is over the export size cap). Call Load / Wait for an ExportHandle with data.
 type ExportRef struct {
 	client   *Client
 	jobID    string

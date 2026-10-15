@@ -84,12 +84,17 @@ const (
 	TaskStatusProcessing TaskStatus = "processing"
 	TaskStatusSuccessful TaskStatus = "successful"
 	TaskStatusFailed     TaskStatus = "failed"
+	// TaskStatusExpired marks a successful task whose stored body has aged out of its retention
+	// window (14 days by default), counted from the row's UpdatedAt. Only successful rows
+	// expire; failed rows stay failed. The row has no ResultURL, and its content endpoint
+	// answers 410 result_expired. A "successful" status filter still matches it.
+	TaskStatusExpired TaskStatus = "expired"
 )
 
 // IsKnown reports whether t is one of the TaskStatus constants this SDK version defines.
 func (t TaskStatus) IsKnown() bool {
 	switch t {
-	case TaskStatusPending, TaskStatusProcessing, TaskStatusSuccessful, TaskStatusFailed:
+	case TaskStatusPending, TaskStatusProcessing, TaskStatusSuccessful, TaskStatusFailed, TaskStatusExpired:
 		return true
 	default:
 		return false
@@ -226,6 +231,8 @@ type Spend struct {
 	Cost    float64 `json:"cost"`
 }
 
+// Deprecated: TaskSpend is only referenced by the deprecated TaskResult.Spend.
+//
 // TaskSpend is a task's indicative spend, both the running total across every attempt and
 // just the most recent one.
 type TaskSpend struct {
@@ -257,8 +264,33 @@ type Run struct {
 	// FailureDetail is a human-readable explanation of FailureReason (e.g. which cap, and when
 	// it resets, UTC). Nil when absent or null.
 	FailureDetail *string `json:"failure_detail,omitempty"`
-	CreatedAt     string  `json:"created_at"`
-	UpdatedAt     string  `json:"updated_at"`
+	// Trigger records what started the run: RunTriggerManual or RunTriggerScheduled.
+	Trigger   RunTrigger `json:"trigger,omitempty"`
+	CreatedAt string     `json:"created_at"`
+	UpdatedAt string     `json:"updated_at"`
+}
+
+// RunTrigger records what started a run.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
+type RunTrigger string
+
+const (
+	// RunTriggerManual is a run a caller started through the API: a submit, a rerun, or a
+	// manual fire of a scheduled job.
+	RunTriggerManual RunTrigger = "manual"
+	// RunTriggerScheduled is a run a scheduled job's schedule started.
+	RunTriggerScheduled RunTrigger = "scheduled"
+)
+
+// IsKnown reports whether t is one of the RunTrigger constants this SDK version defines.
+func (t RunTrigger) IsKnown() bool {
+	switch t {
+	case RunTriggerManual, RunTriggerScheduled:
+		return true
+	default:
+		return false
+	}
 }
 
 // ScheduleRate is an interval-based schedule fire policy — every N units.
@@ -412,7 +444,14 @@ type TaskResult struct {
 	ResultURL   string         `json:"result_url,omitempty"`
 	Error       *Problem       `json:"error,omitempty"`
 	SourceRunID string         `json:"source_run_id,omitempty"`
-	Spend       *TaskSpend     `json:"spend,omitempty"`
+	// CreatedAt and UpdatedAt are the task row's timestamps (RFC 3339). On a finished row
+	// UpdatedAt is when the scrape settled, except on rows a partial rerun copied from an
+	// earlier run (SourceRunID set), where it is the copy time.
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	// Deprecated: the Batch API does not return a per-task spend on result rows, so this is
+	// always nil. Read run-level spend from Run.Stats.Spend.
+	Spend *TaskSpend `json:"spend,omitempty"`
 }
 
 // GetResultsOptions selects which run to page results for, plus pagination and a status
@@ -422,7 +461,9 @@ type GetResultsOptions struct {
 	RunID  string
 	Status string
 	Cursor string
-	Limit  int
+	// Deprecated: the results endpoint returns fixed-size pages (about 1000 rows) and
+	// ignores a page size, so this is not sent.
+	Limit int
 }
 
 // GetResultsResponse is the response for Client.GetResults.

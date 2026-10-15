@@ -105,7 +105,9 @@ type Rate struct {
 	unit  string
 }
 
-// NewRate builds an interval-based schedule. unit is one of "minute", "hour", "day".
+// NewRate builds an interval-based schedule. unit is one of "minute", "hour", "day". The API
+// rejects a rate that fires more often than the account minimum (60 minutes by default) with a
+// 400; that limit is per account, so it is not checked here.
 func NewRate(every int, unit string) (Rate, error) {
 	if every < 1 {
 		return Rate{}, fmt.Errorf("invalid Rate.every: must be >= 1, got %d", every)

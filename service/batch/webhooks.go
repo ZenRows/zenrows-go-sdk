@@ -21,9 +21,11 @@ func (c *Client) GetJobWebhook(ctx context.Context, jobID string) (*WebhookConfi
 	return &result, nil
 }
 
-// PutJobWebhook replaces the job's webhook config wholesale. Both URL and Signature are
-// required (no defaulting at the mutate boundary, so a partial update can't silently toggle
-// signing). Returns the persisted config.
+// PutJobWebhook replaces the job's webhook config wholesale. The API requires both the URL
+// and the signing choice, and this always sends config.Signature, so leaving it unset sends
+// false and turns HMAC signing off. When changing only the URL of a signed webhook, read the
+// current config first (GetJobWebhook) or use JobRef.SetWebhook, which takes the signing
+// choice as an explicit argument. Returns the persisted config.
 func (c *Client) PutJobWebhook(ctx context.Context, jobID string, config WebhookConfig) (*WebhookConfig, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
