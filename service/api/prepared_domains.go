@@ -91,9 +91,13 @@ func (e *PreparedDomainError) Error() string {
 // until Status is no longer "preparing". These endpoints don't fetch pages and cost no credits,
 // and the client's retry settings don't apply to them.
 //
-// A non-2xx answer returns a *PreparedDomainError, for example 400 invalid_argument,
+// An empty or whitespace-only domain returns an InvalidParameterError before any request. A
+// non-2xx answer returns a *PreparedDomainError, for example 400 invalid_argument,
 // 409 in_progress, 429 out_of_allowance or 503 overloaded / disabled.
 func (c *Client) PrepareDomain(ctx context.Context, domain string, exampleURLs []string) (*PreparedDomainStatus, error) {
+	if err := checkDomain(domain); err != nil {
+		return nil, err
+	}
 	if exampleURLs == nil {
 		exampleURLs = []string{}
 	}
@@ -111,13 +115,23 @@ func (c *Client) PrepareDomain(ctx context.Context, domain string, exampleURLs [
 // (GET /v1/extract/prepared-domains/{domain}). Status is "preparing", "ready" or "failed"; a
 // failed preparation carries a Failure with its code, detail and whether it used a slot.
 //
-// A non-2xx answer returns a *PreparedDomainError, for example 404 not_found when your account
+// An empty or whitespace-only domain returns an InvalidParameterError before any request. A
+// non-2xx answer returns a *PreparedDomainError, for example 404 not_found when your account
 // never submitted domain.
 func (c *Client) PreparedDomainStatus(ctx context.Context, domain string) (*PreparedDomainStatus, error) {
-	if domain == "" {
-		return nil, InvalidParameterError{Msg: "domain cannot be empty"}
+	if err := checkDomain(domain); err != nil {
+		return nil, err
 	}
 	return c.preparedDomainsRequest(ctx, http.MethodGet, preparedDomainsPath+"/"+url.PathEscape(domain), nil)
+}
+
+// checkDomain rejects an empty or whitespace-only domain: it would request the list endpoint and
+// read its answer as a status.
+func checkDomain(domain string) error {
+	if strings.TrimSpace(domain) == "" {
+		return InvalidParameterError{Msg: "domain cannot be empty"}
+	}
+	return nil
 }
 
 func (c *Client) preparedDomainsRequest(ctx context.Context, method, path string, body []byte) (*PreparedDomainStatus, error) {

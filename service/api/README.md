@@ -181,6 +181,8 @@ if errors.As(err, &perr) {
 }
 ```
 
+An empty or whitespace-only domain returns an `InvalidParameterError` before any request.
+
 Both methods return a `*scraperapi.PreparedDomainError` on an error answer, with `StatusCode`, `Code` (`invalid_argument`, `not_found`, `in_progress`, `out_of_allowance`, `overloaded`, `disabled`, ...), `Detail`, `Reason`, `RetryAfter` and the raw `Body`. See the [Extract endpoints docs](https://docs.zenrows.com/extract/endpoints) for every status and failure code.
 
 A `422` with problem code `no_data_extracted` means Extract knows this kind of page but found no data on it. It isn't charged, and the client never retries it, even with `WithMaxRetryCount` set. `response.IsNoDataExtracted()` tells you when you got one. See the [Extract docs](https://docs.zenrows.com/extract/setup).

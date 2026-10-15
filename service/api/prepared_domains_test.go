@@ -120,13 +120,18 @@ func TestPreparedDomainStatusEscapesTheDomain(t *testing.T) {
 	}
 }
 
-func TestPreparedDomainStatusRejectsAnEmptyDomain(t *testing.T) {
+func TestPreparedDomainsRejectAnEmptyDomain(t *testing.T) {
 	client, seen := preparedDomainsStub(t, http.StatusOK, preparingJSON, nil)
 
-	_, err := client.PreparedDomainStatus(context.Background(), "")
-	var invalid scraperapi.InvalidParameterError
-	if !errors.As(err, &invalid) {
-		t.Fatalf("expected InvalidParameterError, got %v", err)
+	for _, domain := range []string{"", "   ", "\t\n"} {
+		var invalid scraperapi.InvalidParameterError
+		if _, err := client.PreparedDomainStatus(context.Background(), domain); !errors.As(err, &invalid) {
+			t.Fatalf("PreparedDomainStatus(%q): expected InvalidParameterError, got %v", domain, err)
+		}
+		_, err := client.PrepareDomain(context.Background(), domain, []string{"https://www.example.com/"})
+		if !errors.As(err, &invalid) {
+			t.Fatalf("PrepareDomain(%q): expected InvalidParameterError, got %v", domain, err)
+		}
 	}
 	if len(*seen) != 0 {
 		t.Fatalf("expected no request, got %d", len(*seen))
