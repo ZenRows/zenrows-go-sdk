@@ -143,11 +143,16 @@ type CreateParams struct {
 	// MaxItems stops the crawl once it has kept this many URLs, 1 to 100,000 (API default 100).
 	MaxItems int `json:"max_items,omitempty"`
 	// MaxPages stops the crawl once it has fetched this many pages, 1 to 100,000 (API default
-	// 100). It bounds what the crawl costs: each fetch is one request on your account.
+	// 100). It bounds what the crawl costs: each fetch is one request on your account. Every page
+	// the crawl opens counts and is billed, returned or not.
 	MaxPages int `json:"max_pages,omitempty"`
-	// IncludePatterns keeps a URL only if it contains at least one of these substrings.
+	// IncludePatterns keeps a URL only if it contains at least one of these substrings. Patterns
+	// filter what the crawl returns, not what it opens: it still opens on-site pages that fail
+	// them, to reach pages that match, and those fetches count toward MaxPages and are billed. A
+	// crawl whose patterns match nothing ends StatusCompleted with no results.
 	IncludePatterns []string `json:"include_patterns,omitempty"`
-	// ExcludePatterns drops a URL containing any of these substrings, even if it is included.
+	// ExcludePatterns drops a URL containing any of these substrings, even if it is included. The
+	// crawl may still open it to follow its links.
 	ExcludePatterns []string `json:"exclude_patterns,omitempty"`
 	// OutputFormat fetches each kept URL's page too, in this format. Empty means URLs only.
 	OutputFormat OutputFormat `json:"output_format,omitempty"`
