@@ -155,6 +155,11 @@ type RequestParameters struct {
 	Mode Mode `json:"mode,omitempty" structs:"mode,omitempty" schema:"mode"`
 
 	// Output modifiers
+
+	// AutoParse requests general-purpose JSON from any page.
+	//
+	// Deprecated: Autoparse is deprecated. Use Client.Extract for structured data, or
+	// CSSExtractor.
 	AutoParse    bool   `json:"autoparse,omitempty" structs:"autoparse,omitempty" schema:"autoparse"`
 	CSSExtractor string `json:"css_extractor,omitempty" structs:"css_extractor,omitempty" schema:"css_extractor"`
 
@@ -163,10 +168,9 @@ type RequestParameters struct {
 	// contracts. Prefer Client.Extract, which sets this for you and defaults to ExtractModeAuto.
 	Extract ExtractMode `json:"extract,omitempty" structs:"extract,omitempty" schema:"extract"`
 
-	// DisableAutoparseFallback disables Client.Extract's default behavior of retrying once
-	// with AutoParse when ExtractModeAuto hits the legacy domain-not-enabled error (a 402
-	// with problem code AUTH010). A 403 REQS007 (domain not prepared yet) is never retried.
-	// Extract-only; not sent to the API.
+	// DisableAutoparseFallback is kept so existing code compiles. Not sent to the API.
+	//
+	// Deprecated: has no effect; Extract no longer falls back to AutoParse.
 	DisableAutoparseFallback bool `json:"-" structs:"-" schema:"-"`
 
 	// DisableAdaptiveStealth disables Client.Extract's default behavior of sending Adaptive

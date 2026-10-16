@@ -15,6 +15,11 @@ type Problem struct { //nolint:errname
 	// Detail is the human-readable explanation specific to this occurrence of the problem.
 	Detail string `json:"detail"`
 
+	// Reason is a machine-readable refinement of Code, when the API sends one. For example a
+	// 403 REQS007 from Extract carries "domain_not_prepared", "page_not_recognised" or
+	// "domain_not_enabled". Empty when the body has none.
+	Reason string `json:"reason,omitempty"`
+
 	// Instance an absolute URI that identifies the specific occurrence of the problem.
 	Instance string `json:"instance"`
 

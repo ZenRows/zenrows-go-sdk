@@ -29,6 +29,7 @@ elements dynamically — all with the right features enabled.
     - [POST/PUT Requests](#post-or-put-requests)
   - [Custom Request Parameters](#custom-request-parameters)
   - [Extract](#extract)
+    - [Preparing a domain](#preparing-a-domain)
   - [Batch](#batch)
   - [Handling Responses](#handling-responses)
 - [Configuration Options](#configuration-options)
@@ -143,6 +144,60 @@ fmt.Println("Response Body:", string(response.Body()))
 ```
 
 `Extract()` also sends [Adaptive Stealth Mode](https://docs.zenrows.com/fetch/features/adaptive-stealth-mode) (`mode=auto`) by default, except when you set `JSRender` or `UsePremiumProxies`: the API rejects either combined with Adaptive Stealth Mode, so your fixed configuration is sent as is. Set `DisableAdaptiveStealth` to turn it off entirely.
+
+Extract works on any prepared domain (you can prepare one yourself with `POST /v1/extract/prepared-domains`). A `403` with problem code `REQS007` means Extract can't extract this page. Check `reason` in the problem body when present (`response.Problem().Reason`); older responses may not carry it:
+
+- `domain_not_prepared`: prepare the domain with `client.PrepareDomain()` (see below), poll `client.PreparedDomainStatus()` until `Status` is `"ready"`, then retry.
+- `page_not_recognised`: the domain is served, but this page isn't one Extract extracts (a home, search, login or category page). Try a product, article or listing page, or retry once in a few minutes. Preparing the domain again changes nothing.
+- `domain_not_enabled`: preparing doesn't help. Use `CSSExtractor`, or contact support.
+
+```go
+response, err := client.Extract(context.Background(), url, nil)
+if err != nil {
+    // handle error
+}
+if prob := response.Problem(); prob != nil && prob.Code == "REQS007" {
+    switch prob.Reason {
+    case "domain_not_prepared":
+        // client.PrepareDomain(...), then poll client.PreparedDomainStatus(...)
+    case "page_not_recognised":
+        // try a product, article or listing page
+    case "domain_not_enabled":
+        // use CSSExtractor, or contact support
+    }
+}
+```
+
+The legacy `402` with problem code `AUTH010` means the domain isn't enabled. `Extract()` returns both responses to you as is, in one request, and never retries them with autoparse. `DisableAutoparseFallback` is deprecated and has no effect.
+
+#### Preparing a domain
+
+`client.PrepareDomain(ctx, domain, exampleURLs)` submits a domain for Extract (`POST /v1/extract/prepared-domains`), and `client.PreparedDomainStatus(ctx, domain)` reads where it is (`GET /v1/extract/prepared-domains/{domain}`). Both return the parsed `*scraperapi.PreparedDomainStatus`. Pass the domain without a scheme and 1 to 5 example URLs, one per kind of page you want to extract. These calls cost no credits, and the client's retry settings don't apply to them.
+
+Preparation takes minutes, and the client does not wait for it. Poll the status until it is no longer `"preparing"`:
+
+```go
+ctx := context.Background()
+status, err := client.PrepareDomain(ctx, "www.scrapingcourse.com", []string{
+    "https://www.scrapingcourse.com/ecommerce/",
+})
+for err == nil && status.Status == "preparing" {
+    time.Sleep(30 * time.Second)
+    status, err = client.PreparedDomainStatus(ctx, "www.scrapingcourse.com")
+}
+
+var perr *scraperapi.PreparedDomainError
+if errors.As(err, &perr) {
+    // e.g. 409 in_progress, 429 out_of_allowance, 503 overloaded
+    fmt.Println(perr.StatusCode, perr.Code, perr.Detail)
+} else if err == nil {
+    fmt.Println(status.Status) // "ready" or "failed" (see status.Failure)
+}
+```
+
+An empty or whitespace-only domain returns an `InvalidParameterError` before any request.
+
+Both methods return a `*scraperapi.PreparedDomainError` on an error answer, with `StatusCode`, `Code` (`invalid_argument`, `not_found`, `in_progress`, `out_of_allowance`, `overloaded`, `disabled`, ...), `Detail`, `Reason`, `RetryAfter` and the raw `Body`. See the [Extract endpoints docs](https://docs.zenrows.com/extract/endpoints) for every status and failure code.
 
 A `422` with problem code `no_data_extracted` means Extract knows this kind of page but found no data on it. It isn't charged, and the client never retries it, even with `WithMaxRetryCount` set. `response.IsNoDataExtracted()` tells you when you got one. See the [Extract docs](https://docs.zenrows.com/extract/setup).
 
