@@ -21,9 +21,12 @@ func (c *Client) GetJobWebhook(ctx context.Context, jobID string) (*WebhookConfi
 	return &result, nil
 }
 
-// PutJobWebhook replaces the job's webhook config wholesale. Both URL and Signature are
-// required (no defaulting at the mutate boundary, so a partial update can't silently toggle
-// signing). Returns the persisted config.
+// PutJobWebhook replaces the job's webhook config wholesale and always sends
+// config.Signature, so a WebhookConfig without Signature set sends false and turns HMAC
+// signing off. Returns the persisted config.
+//
+// Deprecated: use SetJobWebhook (or JobRef.SetWebhook), which takes the signing choice as a
+// required argument so it can't be left out by accident.
 func (c *Client) PutJobWebhook(ctx context.Context, jobID string, config WebhookConfig) (*WebhookConfig, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
@@ -35,6 +38,14 @@ func (c *Client) PutJobWebhook(ctx context.Context, jobID string, config Webhook
 		return nil, err
 	}
 	return &result, nil
+}
+
+// SetJobWebhook replaces the job's webhook config wholesale. The API requires both the URL and
+// the signing choice on a replace, so signature is a required argument: pass true to keep (or
+// turn on) HMAC signing of deliveries, false to turn it off. Turning it on requires an active
+// HMAC key (else a 400 webhook_signing_requires_active_key). Returns the persisted config.
+func (c *Client) SetJobWebhook(ctx context.Context, jobID, url string, signature bool) (*WebhookConfig, error) {
+	return c.PutJobWebhook(ctx, jobID, WebhookConfig{URL: url, Signature: signature})
 }
 
 // DeleteJobWebhook clears the job's webhook config. Idempotent: succeeds whether or not one

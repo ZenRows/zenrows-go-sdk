@@ -1,9 +1,13 @@
 package batch
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
-// Credits charged per successful request, by configuration. mode=auto is charged
-// dynamically post-factum, anywhere in the Auto range.
+// Credits charged per billed request, by configuration. A successful request is billed, and so
+// is a target that answers 404 or 410 (the task still ends as failed). mode=auto is charged
+// after the fact, anywhere in the Auto range.
 const (
 	BaseCredits         = 1
 	JSCredits           = 5
@@ -56,6 +60,16 @@ type CostEstimate struct {
 // Exact is true when the charge is a single number (no auto tasks).
 func (e CostEstimate) Exact() bool { return e.Min == e.Max }
 
+// String renders the estimate on one line, e.g. "10 credits (2 tasks)", or
+// "3-75 credits (3 tasks)" when auto tasks make it a range.
+func (e CostEstimate) String() string {
+	credits := fmt.Sprintf("%d", e.Min)
+	if !e.Exact() {
+		credits = fmt.Sprintf("%d-%d", e.Min, e.Max)
+	}
+	return fmt.Sprintf("%s credits (%d tasks)", credits, e.TaskCount)
+}
+
 // AutoTasks is how many tasks use mode=auto — the only source of range.
 func (e CostEstimate) AutoTasks() int {
 	for _, line := range e.Breakdown {
@@ -66,23 +80,16 @@ func (e CostEstimate) AutoTasks() int {
 	return 0
 }
 
-var truthyStrings = map[string]bool{"true": true, "1": true, "yes": true, "on": true}
-
-// truthy coerces a scraper-param scalar to a boolean the same way the server's billing engine
-// does: bools pass through, numbers are nonzero-truthy, strings match the on-spellings
-// (case-insensitive).
+// truthy reports whether a scraper-param value turns a flag on. The Batch API accepts a boolean
+// param only as a JSON true or false, or a string equal to "true" or "false" ignoring case; of
+// those, only true and "true" turn the flag on. It rejects anything else (1, "1", "yes", "on",
+// " true ") with a 400, so those price as off here.
 func truthy(value any) bool {
 	switch v := value.(type) {
 	case bool:
 		return v
-	case int:
-		return v != 0
-	case int64:
-		return v != 0
-	case float64:
-		return v != 0
 	case string:
-		return truthyStrings[strings.ToLower(strings.TrimSpace(v))]
+		return strings.EqualFold(v, "true")
 	default:
 		return false
 	}
@@ -126,8 +133,9 @@ func taskParams(task Task) map[string]any {
 }
 
 // EstimateCost estimates the credit cost of a job before submitting it, assuming every task
-// succeeds once. Pure and offline — no network call. Per-task zenrows_params override the
-// job-level zenrows_params on key collision (task wins), matching the worker's merge.
+// succeeds once. Pure and offline, no network call. Each task's params are the job-level
+// zenrowsParams with the task's own ZenRowsParams merged over them (the task wins on a key
+// collision), the same merge the API applies.
 //
 // file_input_id-based jobs estimate as zero tasks (Tasks is empty) — the CSV row count isn't
 // known client-side.

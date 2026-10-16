@@ -112,6 +112,10 @@ type SubmitScheduledOptions struct {
 	Metadata       map[string]any
 	Webhook        *WebhookConfig
 	IdempotencyKey string
+	// WaitForIngest, for a submit large enough to be accepted asynchronously (202), returns
+	// only once the first run's task rows are written. A scheduled job with no run yet returns
+	// at once.
+	WaitForIngest bool
 }
 
 // SubmitScheduled submits a scheduled job. opts.Schedule is one of the typed builders (At,
@@ -127,7 +131,7 @@ func (c *Client) SubmitScheduled(ctx context.Context, opts SubmitScheduledOption
 	if err != nil {
 		return JobRef{}, err
 	}
-	return c.submitAndWrap(ctx, body, opts.IdempotencyKey, false)
+	return c.submitAndWrap(ctx, body, opts.IdempotencyKey, opts.WaitForIngest)
 }
 
 // EstimateCost estimates the credit cost of a job before submitting it, assuming every task
