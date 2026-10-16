@@ -320,3 +320,32 @@ func TestSetJobWebhookURLStopsOnOtherErrors(t *testing.T) {
 		t.Fatal("must not PUT when the current config can't be read")
 	}
 }
+
+func TestSubmitScheduledReturnsWithoutARunOrPolling(t *testing.T) {
+	var requests int32
+	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		if r.Method != http.MethodPost || r.URL.Path != "/jobs" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		// The API's real answer to a scheduled submit: 201 and no latest_run.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"job_id":"job_1","status":"closed","accepted_tasks":1}`))
+	})
+	defer closeServer()
+
+	rate, err := batch.NewRate(1, "hour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.SubmitScheduled(context.Background(), batch.SubmitScheduledOptions{
+		Schedule: rate, Tasks: []batch.Task{{URL: "https://a.example"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.JobID() != consistencyJobID || atomic.LoadInt32(&requests) != 1 {
+		t.Fatalf("job %q after %d requests", job.JobID(), requests)
+	}
+}

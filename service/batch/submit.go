@@ -112,15 +112,13 @@ type SubmitScheduledOptions struct {
 	Metadata       map[string]any
 	Webhook        *WebhookConfig
 	IdempotencyKey string
-	// WaitForIngest, for a submit large enough to be accepted asynchronously (202), returns
-	// only once the first run's task rows are written. A scheduled job with no run yet returns
-	// at once.
-	WaitForIngest bool
 }
 
 // SubmitScheduled submits a scheduled job. opts.Schedule is one of the typed builders (At,
 // Rate, Calendar — see NewAt/NewRate/NewCalendar), which validate their inputs the same way
-// the server does. Tasks and FileInputID are mutually exclusive, same as SubmitRegular.
+// the server does. Tasks and FileInputID are mutually exclusive, same as SubmitRegular. The
+// submit creates no run, so the returned job has no latest run and there is nothing to wait
+// for: the first fire creates run 1. Use JobRef.Run().Wait after a fire.
 func (c *Client) SubmitScheduled(ctx context.Context, opts SubmitScheduledOptions) (JobRef, error) {
 	if opts.Schedule == nil {
 		return JobRef{}, fmt.Errorf("SubmitScheduled: Schedule is required")
@@ -131,7 +129,7 @@ func (c *Client) SubmitScheduled(ctx context.Context, opts SubmitScheduledOption
 	if err != nil {
 		return JobRef{}, err
 	}
-	return c.submitAndWrap(ctx, body, opts.IdempotencyKey, opts.WaitForIngest)
+	return c.submitAndWrap(ctx, body, opts.IdempotencyKey, false)
 }
 
 // EstimateCost estimates the credit cost of a job before submitting it, assuming every task
