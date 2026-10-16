@@ -133,18 +133,21 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 //
 // Extract works on any prepared domain (you can prepare one yourself with
 // POST /v1/extract/prepared-domains), with any active API key. A 403 with problem code
-// REQS007 means the domain isn't prepared for Extract yet: prepare it with
-// POST /v1/extract/prepared-domains (Client.PrepareDomain, then check it with
-// Client.PreparedDomainStatus), or set params.AutoparseFallback to retry with deprecated
-// autoparse. The legacy domain-not-enabled error is a 402 with problem code
-// AUTH010. By default Extract returns both responses to you as is, without a second request.
+// REQS007 means Extract can't extract this page. Check Reason in the problem body
+// (Response.Problem().Reason) when present; older responses may not carry it:
 //
-// params.AutoparseFallback (opt-in, default false) makes ExtractModeAuto retry once with
-// AutoParse set on either code instead. Autoparse is deprecated, and the retry is a second,
-// separately charged request.
+//   - "domain_not_prepared": prepare the domain with Client.PrepareDomain, poll
+//     Client.PreparedDomainStatus until Status is "ready", then retry.
+//   - "page_not_recognised": the domain is served, but this page isn't one Extract extracts
+//     (a home, search, login or category page). Try a product, article or listing page, or
+//     retry once in a few minutes. Preparing the domain again changes nothing.
+//   - "domain_not_enabled": preparing doesn't help. Use CSSExtractor, or contact support.
 //
-// Extract also sends Adaptive Stealth Mode (wire param "mode=auto") by default on the
-// extract attempt and on the AutoParse fallback, so a target needing JSRender/
+// The legacy domain-not-enabled error is a 402 with problem code AUTH010. Extract returns
+// both responses to you as is, in one request; it never retries them with AutoParse.
+//
+// Extract also sends Adaptive Stealth Mode (wire param "mode=auto") by default, so a target
+// needing JSRender/
 // UsePremiumProxies (e.g. a site with heavy anti-bot defenses) escalates automatically
 // instead of failing with REQS002. It is skipped when params sets JSRender or
 // UsePremiumProxies (the API rejects either combined with Adaptive Stealth Mode) or its own
@@ -165,22 +168,7 @@ func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestP
 		extractParams.CustomParams = withCustomParam(extractParams.CustomParams, "mode", "auto")
 	}
 
-	response, err := c.Get(ctx, targetURL, &extractParams)
-	if err != nil {
-		return response, err
-	}
-
-	if extractParams.Extract == ExtractModeAuto &&
-		extractParams.AutoparseFallback &&
-		!extractParams.DisableAutoparseFallback &&
-		isExtractDomainUnavailable(response) {
-		autoparseParams := extractParams
-		autoparseParams.Extract = ""
-		autoparseParams.AutoParse = true
-		return c.Get(ctx, targetURL, &autoparseParams)
-	}
-
-	return response, nil
+	return c.Get(ctx, targetURL, &extractParams)
 }
 
 // addsAdaptiveStealth reports whether Extract should add the wire param "mode=auto". It
@@ -211,23 +199,6 @@ func withCustomParam(params map[string]string, key, value string) map[string]str
 	}
 	merged[key] = value
 	return merged
-}
-
-// isExtractDomainUnavailable reports whether a response is Extract saying it can't serve the
-// target domain yet: a 403 with problem code REQS007 (domain not prepared yet) or a 402 with
-// the legacy domain-not-enabled code AUTH010. Any other 402/403 (no credits, bad key) is not.
-func isExtractDomainUnavailable(response *Response) bool {
-	var want string
-	switch response.StatusCode() {
-	case http.StatusForbidden:
-		want = "REQS007"
-	case http.StatusPaymentRequired:
-		want = "AUTH010"
-	default:
-		return false
-	}
-	prob := response.Problem()
-	return prob != nil && strings.EqualFold(prob.Code, want)
 }
 
 // Post sends an HTTP POST request to the ZenRows Fetch API to scrape the given target URL using the specified parameters.

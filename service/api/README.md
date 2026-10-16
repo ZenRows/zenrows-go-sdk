@@ -145,16 +145,30 @@ fmt.Println("Response Body:", string(response.Body()))
 
 `Extract()` also sends [Adaptive Stealth Mode](https://docs.zenrows.com/fetch/features/adaptive-stealth-mode) (`mode=auto`) by default, except when you set `JSRender` or `UsePremiumProxies`: the API rejects either combined with Adaptive Stealth Mode, so your fixed configuration is sent as is. Set `DisableAdaptiveStealth` to turn it off entirely.
 
-Extract works on any prepared domain (you can prepare one yourself with `POST /v1/extract/prepared-domains`). A `403` with problem code `REQS007` means the domain isn't prepared for Extract yet: prepare it with `POST /v1/extract/prepared-domains` (`client.PrepareDomain()`, see below), or set `AutoparseFallback` to retry with deprecated autoparse. The legacy `402` with problem code `AUTH010` is handled the same way. By default `Extract()` returns both responses to you as is, without a second request.
+Extract works on any prepared domain (you can prepare one yourself with `POST /v1/extract/prepared-domains`). A `403` with problem code `REQS007` means Extract can't extract this page. Check `reason` in the problem body when present (`response.Problem().Reason`); older responses may not carry it:
+
+- `domain_not_prepared`: prepare the domain with `client.PrepareDomain()` (see below), poll `client.PreparedDomainStatus()` until `Status` is `"ready"`, then retry.
+- `page_not_recognised`: the domain is served, but this page isn't one Extract extracts (a home, search, login or category page). Try a product, article or listing page, or retry once in a few minutes. Preparing the domain again changes nothing.
+- `domain_not_enabled`: preparing doesn't help. Use `CSSExtractor`, or contact support.
 
 ```go
-// Opt in to one retry with the deprecated autoparse on REQS007 / AUTH010.
-// The retry is a second, separately charged request.
-params := &scraperapi.RequestParameters{AutoparseFallback: true}
-response, err := client.Extract(context.Background(), url, params)
+response, err := client.Extract(context.Background(), url, nil)
+if err != nil {
+    // handle error
+}
+if prob := response.Problem(); prob != nil && prob.Code == "REQS007" {
+    switch prob.Reason {
+    case "domain_not_prepared":
+        // client.PrepareDomain(...), then poll client.PreparedDomainStatus(...)
+    case "page_not_recognised":
+        // try a product, article or listing page
+    case "domain_not_enabled":
+        // use CSSExtractor, or contact support
+    }
+}
 ```
 
-`DisableAutoparseFallback` is deprecated: the fallback is now off unless you set `AutoparseFallback`.
+The legacy `402` with problem code `AUTH010` means the domain isn't enabled. `Extract()` returns both responses to you as is, in one request, and never retries them with autoparse. `DisableAutoparseFallback` is deprecated and has no effect.
 
 #### Preparing a domain
 

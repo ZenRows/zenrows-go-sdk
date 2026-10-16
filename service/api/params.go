@@ -168,19 +168,9 @@ type RequestParameters struct {
 	// contracts. Prefer Client.Extract, which sets this for you and defaults to ExtractModeAuto.
 	Extract ExtractMode `json:"extract,omitempty" structs:"extract,omitempty" schema:"extract"`
 
-	// AutoparseFallback makes Client.Extract retry once with the deprecated AutoParse when
-	// ExtractModeAuto answers 403 REQS007 (domain not prepared for Extract yet) or the legacy
-	// 402 AUTH010. Opt-in, default false: without it both responses are returned as is. The
-	// retry is a second, separately charged request. To serve a domain that isn't prepared
-	// yet, prepare it with POST /v1/extract/prepared-domains instead.
-	// Extract-only; not sent to the API.
-	AutoparseFallback bool `json:"-" structs:"-" schema:"-"`
-
-	// DisableAutoparseFallback turns the AutoParse fallback off even when AutoparseFallback
-	// is set. Extract-only; not sent to the API.
+	// DisableAutoparseFallback is kept so existing code compiles. Not sent to the API.
 	//
-	// Deprecated: Client.Extract no longer falls back to AutoParse by default, so this has no
-	// effect on its own. Leave AutoparseFallback unset instead.
+	// Deprecated: has no effect; Extract no longer falls back to AutoParse.
 	DisableAutoparseFallback bool `json:"-" structs:"-" schema:"-"`
 
 	// DisableAdaptiveStealth disables Client.Extract's default behavior of sending Adaptive
