@@ -10,15 +10,15 @@ This module is v0 (`service/crawl/v0.x`), so its API can change before v1.
 
 A **crawl** is one run from one start URL. It walks up to `Depth` link hops (no limit when you
 leave `Depth` out), keeps the URLs that match `IncludePatterns` (and none of `ExcludePatterns`),
-and stops at `MaxItems` kept URLs or `MaxPages` fetched pages (100 each by default). The
-patterns filter what a crawl returns, not what it opens: it still opens on-site pages that fail
-them to reach pages that match, and every page it opens counts toward `MaxPages` and is billed. It runs
+and stops at `MaxItems` kept URLs or `MaxPages` fetched pages (100 each by default). It runs
 asynchronously: `Create` returns at once with `StatusRunning`, and the crawl ends
 `StatusCompleted`, `StatusStopped` (you called `Stop`, or the account ran out of credits or the
 API key hit a credit cap: then `StopReason` is empty and `Crawl.Error.Code` is
 `RunErrorInsufficientCredits` or `RunErrorAPIKeyCapReached`) or `StatusFailed` (`Crawl.Error`
-says why). With `OutputFormat: crawl.OutputFormatHTML`, each kept
-URL's page is fetched too. A crawl stays on the start URL's registrable domain; subdomains count.
+says why). A crawl whose pages held nothing new to follow (no link, only links to other sites,
+or only links the patterns reject) ends `StatusCompleted` with no results and a nil `Error`:
+check the patterns against the URLs the start page links to. With
+`OutputFormat: crawl.OutputFormatHTML`, each kept URL's page is fetched too. A crawl stays on the start URL's registrable domain; subdomains count.
 
 ## Installation
 

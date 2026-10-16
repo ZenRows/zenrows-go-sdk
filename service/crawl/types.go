@@ -67,10 +67,15 @@ const (
 	RunErrorInsufficientCredits RunErrorCode = "insufficient_credits"
 	//nolint:gosec // G101: an error code the API answers with, not a credential.
 	RunErrorAPIKeyCapReached RunErrorCode = "api_key_cap_reached"
+	// RunErrorSeedUnreachable means the start page could not be reached, was blocked, or came
+	// back empty, with no visible text and no link.
 	RunErrorSeedUnreachable  RunErrorCode = "seed_unreachable"
 	RunErrorDomainNotAllowed RunErrorCode = "domain_not_allowed"
-	RunErrorNoItemsFound     RunErrorCode = "no_items_found"
-	RunErrorInternalError    RunErrorCode = "internal_error"
+	// RunErrorNoItemsFound means the crawl read the start page but found no data it could use, so
+	// it had nothing to follow; start from a listing or product page. A crawl that returns nothing
+	// for any other reason is not a failure: it ends StatusCompleted with no results.
+	RunErrorNoItemsFound  RunErrorCode = "no_items_found"
+	RunErrorInternalError RunErrorCode = "internal_error"
 )
 
 // IsKnown reports whether c is one of the RunErrorCode constants this SDK version defines.
@@ -143,16 +148,12 @@ type CreateParams struct {
 	// MaxItems stops the crawl once it has kept this many URLs, 1 to 100,000 (API default 100).
 	MaxItems int `json:"max_items,omitempty"`
 	// MaxPages stops the crawl once it has fetched this many pages, 1 to 100,000 (API default
-	// 100). It bounds what the crawl costs: each fetch is one request on your account. Every page
-	// the crawl opens counts and is billed, returned or not.
+	// 100). It bounds what the crawl costs: each fetch is one request on your account.
 	MaxPages int `json:"max_pages,omitempty"`
-	// IncludePatterns keeps a URL only if it contains at least one of these substrings. Patterns
-	// filter what the crawl returns, not what it opens: it still opens on-site pages that fail
-	// them, to reach pages that match, and those fetches count toward MaxPages and are billed. A
-	// crawl whose patterns match nothing ends StatusCompleted with no results.
+	// IncludePatterns keeps a URL only if it contains at least one of these substrings. A crawl
+	// whose patterns reject every link ends StatusCompleted with no results and a nil Error.
 	IncludePatterns []string `json:"include_patterns,omitempty"`
-	// ExcludePatterns drops a URL containing any of these substrings, even if it is included. The
-	// crawl may still open it to follow its links.
+	// ExcludePatterns drops a URL containing any of these substrings, even if it is included.
 	ExcludePatterns []string `json:"exclude_patterns,omitempty"`
 	// OutputFormat fetches each kept URL's page too, in this format. Empty means URLs only.
 	OutputFormat OutputFormat `json:"output_format,omitempty"`
