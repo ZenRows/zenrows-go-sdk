@@ -93,8 +93,7 @@ example `service/api/v1.2.3`.
    `ci`, `refactor`, `build` or `style` PR releases nothing.
 2. After each merge to `main`, release-please opens or updates one PR per changed module,
    `chore: release service/<module> X.Y.Z`. It sets the version in
-   `.release-please-manifest.json`, and for `service/api` also in
-   `service/api/version/version.go`. Do not change these by hand. To release, merge that
+   `.release-please-manifest.json` and in the module's `version/version.go`. Do not change these by hand. To release, merge that
    PR. The workflow runs the module's checks, creates the tag `service/<module>/vX.Y.Z`
    and the GitHub release, and makes the Go proxy fetch the new version. The `release`
    environment has no reviewers.
