@@ -1,5 +1,5 @@
 {
   "service/api": "1.2.1",
   "service/batch": "1.0.0",
-  "service/crawl": "1.1.0"
+  "service/crawl": "1.2.0"
 }
