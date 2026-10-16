@@ -349,13 +349,11 @@ func (c *Client) rerunAndWait(ctx context.Context, jobID string, opts RerunOptio
 	if !opts.WaitForIngest || resp.LatestRun.IngestStatus != IngestStatusPending {
 		return resp, nil
 	}
-	job, err := c.WaitForIngest(ctx, jobID, WaitForIngestOptions{})
+	run, err := c.waitForRunIngest(ctx, jobID, resp.LatestRun.RunID)
 	if err != nil {
 		return resp, err
 	}
-	if job.LatestRun != nil && job.LatestRun.RunID == resp.LatestRun.RunID {
-		resp.LatestRun = *job.LatestRun
-	}
+	resp.LatestRun = run
 	return resp, nil
 }
 
@@ -688,8 +686,28 @@ type WaitForIngestOptions struct {
 // WaitForIngest blocks until the current run's async-carrier ingestion has finished writing
 // task rows. Large submissions return 202 Accepted and stream task rows into storage off the
 // request path; until that finishes, results pages may be partial and AddTasks on an open job
-// is rejected with 409. Runs that never ingested asynchronously are done on the first poll.
+// is rejected with 409. Runs that never ingested asynchronously are done on the first poll. A
+// run stopped mid-ingest is waited on until the API marks its ingestion done.
 func (c *Client) WaitForIngest(ctx context.Context, jobID string, opts WaitForIngestOptions) (Job, error) {
+	fetch := func(ctx context.Context) (Job, error) {
+		return c.getJobData(ctx, jobID)
+	}
+	isDone := func(j Job) bool {
+		return j.LatestRun == nil || ingestSettled(*j.LatestRun)
+	}
+
+	return pollUntil(ctx, fetch, isDone, nil, ingestPollOptions(opts))
+}
+
+// ingestSettled reports whether a run's task rows have stopped changing. A run that is stopped
+// or fails mid-ingest still reads ingest_status pending until the API finishes trimming its
+// totals, so only a deleted run ends the wait while ingestion is pending.
+func ingestSettled(run Run) bool {
+	return run.IngestStatus != IngestStatusPending || run.Status == RunStatusDeleted
+}
+
+// ingestPollOptions applies the WaitForIngest defaults.
+func ingestPollOptions(opts WaitForIngestOptions) pollOptions {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 300 * time.Second
@@ -702,19 +720,12 @@ func (c *Client) WaitForIngest(ctx context.Context, jobID string, opts WaitForIn
 	if maxInterval <= 0 {
 		maxInterval = 15 * time.Second
 	}
+	return pollOptions{Timeout: timeout, InitialInterval: pollInterval, MaxInterval: maxInterval}
+}
 
-	fetch := func(ctx context.Context) (Job, error) {
-		return c.getJobData(ctx, jobID)
-	}
-	isDone := func(j Job) bool {
-		run := j.LatestRun
-		if run == nil || TerminalRunStatuses[run.Status] {
-			return true
-		}
-		return run.IngestStatus != IngestStatusPending
-	}
-
-	return pollUntil(ctx, fetch, isDone, nil, pollOptions{
-		Timeout: timeout, InitialInterval: pollInterval, MaxInterval: maxInterval,
-	})
+// waitForRunIngest is WaitForIngest for one run by id, so a replayed rerun response waits on
+// the run it names, not on whichever run is now the job's latest.
+func (c *Client) waitForRunIngest(ctx context.Context, jobID, runID string) (Run, error) {
+	fetch := func(ctx context.Context) (Run, error) { return c.getRunData(ctx, jobID, runID) }
+	return pollUntil(ctx, fetch, ingestSettled, nil, ingestPollOptions(WaitForIngestOptions{}))
 }

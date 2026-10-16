@@ -135,6 +135,8 @@ func TestOtherTooManyRequestsIsStillRetried(t *testing.T) {
 }
 
 func TestRerunWaitForIngest(t *testing.T) {
+	// The job's latest run is a newer run_3: the response replayed for this key names run_2, and
+	// the wait must follow run_2 rather than the latest run.
 	var gets int32
 	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -145,12 +147,14 @@ func TestRerunWaitForIngest(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"job_id":"job_1","latest_run":{"run_id":"run_2","status":"pending","ingest_status":"pending"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/jobs/"+consistencyJobID:
+		case r.Method == http.MethodGet && r.URL.Path == "/jobs/"+consistencyJobID+"/runs/"+consistencyRunID:
 			ingest := "pending"
 			if atomic.AddInt32(&gets, 1) >= 2 {
 				ingest = "done"
 			}
-			_, _ = w.Write([]byte(`{"job_id":"job_1","latest_run":{"run_id":"run_2","status":"running","ingest_status":"` + ingest + `"}}`))
+			_, _ = w.Write([]byte(`{"run_id":"run_2","job_id":"job_1","status":"completed","ingest_status":"` + ingest + `"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/jobs/"+consistencyJobID:
+			_, _ = w.Write([]byte(`{"job_id":"job_1","latest_run":{"run_id":"run_3","status":"running","ingest_status":"pending"}}`))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -159,15 +163,15 @@ func TestRerunWaitForIngest(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	run, err := client.Job(consistencyJobID).RetryFailed(ctx, batch.RetryFailedOptions{WaitForIngest: true})
+	run, err := client.Job(consistencyJobID).RetryFailed(ctx, batch.RetryFailedOptions{IdempotencyKey: "k", WaitForIngest: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.RunID() != consistencyRunID || run.Data.IngestStatus != batch.IngestStatusDone || run.Status() != batch.RunStatusRunning {
+	if run.RunID() != consistencyRunID || run.Data.IngestStatus != batch.IngestStatusDone || run.Status() != batch.RunStatusCompleted {
 		t.Fatalf("run = %+v", run.Data)
 	}
 	if n := atomic.LoadInt32(&gets); n < 2 {
-		t.Fatalf("polled %d times", n)
+		t.Fatalf("polled run_2 %d times", n)
 	}
 
 	resp, err := client.Rerun(ctx, consistencyJobID, batch.RerunOptions{Status: string(batch.TaskStatusFailed)})
@@ -176,6 +180,29 @@ func TestRerunWaitForIngest(t *testing.T) {
 	}
 	if resp.LatestRun.IngestStatus != batch.IngestStatusPending {
 		t.Fatalf("without WaitForIngest the 202 body is returned as is, got %+v", resp.LatestRun)
+	}
+}
+
+func TestWaitForIngestWaitsPastAStopMidIngest(t *testing.T) {
+	// A run stopped mid-ingest is terminal while ingest_status is still pending; its rows and
+	// totals are settled only once the API marks ingestion done.
+	var gets int32
+	client, closeServer := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		ingest := "pending"
+		if atomic.AddInt32(&gets, 1) >= 2 {
+			ingest = "done"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"job_id":"job_1","latest_run":{"run_id":"run_2","status":"stopped","ingest_status":"` + ingest + `"}}`))
+	})
+	defer closeServer()
+
+	job, err := client.WaitForIngest(context.Background(), consistencyJobID, batch.WaitForIngestOptions{PollInterval: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.LatestRun.IngestStatus != batch.IngestStatusDone {
+		t.Fatalf("returned before ingestion finished: %+v", job.LatestRun)
 	}
 }
 
