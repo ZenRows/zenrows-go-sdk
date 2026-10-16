@@ -2,6 +2,7 @@ package scraperapi
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -36,19 +37,13 @@ func NewClient(opts ...Option) *Client {
 		SetBaseURL(client.cfg.baseURL).
 		SetHeader("User-Agent", "zenrows-go/"+version.Version).
 		SetQueryParam(apiKeyParamName, client.cfg.apiKey).
-		SetRetryCount(client.cfg.retryOptions.maxRetryCount).
-		SetRetryWaitTime(client.cfg.retryOptions.retryWaitTime).
-		SetRetryMaxWaitTime(client.cfg.retryOptions.retryMaxWaitTime).
-		AddRetryCondition(func(r *resty.Response, err error) bool {
-			if err != nil {
-				return true
-			}
-			// Extract's 422 no_data_extracted is a final answer: another try returns the same.
-			if isNoDataExtracted(r.StatusCode(), r.Body()) {
-				return false
-			}
-			return slices.Contains(retryableStatusCodes, r.StatusCode())
-		})
+		SetRetryCount(max(client.cfg.retryOptions.maxRetryCount, 0)).
+		// retryAfter returns the wait shouldRetry chose, and resty clamps that wait to
+		// [RetryWaitTime, RetryMaxWaitTime]. retryWait already bounds it, so the clamp is opened wide.
+		SetRetryWaitTime(0).
+		SetRetryMaxWaitTime(math.MaxInt64).
+		SetRetryAfter(retryAfter).
+		AddRetryCondition(client.shouldRetry)
 
 	// if the maxConcurrentRequests is set, create a semaphore to limit the number of concurrent requests
 	if client.cfg.maxConcurrentRequests > 0 {
@@ -106,8 +101,9 @@ func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *R
 		defer func() { <-c.concurrencySemaphore }()
 	}
 
-	// execute the request, and return the response or an error if one occurred
-	res, err := req.Execute(method, "/")
+	// execute the request, and return the response or an error if one occurred. The retry budget
+	// starts now, after any wait for a concurrency slot.
+	res, err := req.SetContext(withRetryState(ctx)).Execute(method, "/")
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +142,7 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 // Mode. Set params.DisableAdaptiveStealth to turn it off entirely.
 //
 // A 422 with problem code no_data_extracted means Extract knows this kind of page but found
-// no data on it. It is not charged and is never retried; check it with
+// no data on it. It is not charged and is never retried (no 422 is); check it with
 // Response.IsNoDataExtracted.
 func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestParameters) (*Response, error) {
 	extractParams := RequestParameters{}

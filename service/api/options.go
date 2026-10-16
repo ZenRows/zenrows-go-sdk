@@ -1,19 +1,17 @@
 package scraperapi
 
 import (
-	"net/http"
 	"os"
 	"time"
 )
 
 const (
 	defaultBaseURL          = "https://api.zenrows.com/v1"
-	defaultMaxRetryCount    = 0
-	defaultRetryWaitTime    = 5 * time.Second
+	defaultMaxRetryCount    = 2
+	defaultRetryWaitTime    = 1 * time.Second
 	defaultRetryMaxWaitTime = 30 * time.Second
+	defaultRetryBudget      = 90 * time.Second
 )
-
-var retryableStatusCodes = []int{http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError}
 
 // Option configures the ZenRows Fetch API client.
 type Option interface {
@@ -32,18 +30,23 @@ type options struct {
 	maxConcurrentRequests int
 }
 
-// retryOptions holds the configuration for the retry mechanism of the ZenRows Fetch API client. Only response status codes in
-// the retryableStatusCodes list will be retried.
+// retryOptions holds the configuration for the retry mechanism of the ZenRows Fetch API client. Only the response status codes
+// in retryableStatusCodes and connection errors before any response are retried; timeouts never are.
 type retryOptions struct {
-	// maxRetryCount is the maximum number of retries to perform. If set to a non-zero value, the client will retry the request up to
-	// this number of times using a backoff strategy. Defaults to 0.
+	// maxRetryCount is the maximum number of retries to perform. Defaults to 2; 0 turns retries off.
 	maxRetryCount int
 
-	// retryWaitTime is the time to wait before retrying the request. Defaults to 5 seconds.
+	// retryWaitTime is the base of the exponential backoff: retry n waits a random time between 250ms and
+	// min(retryMaxWaitTime, retryWaitTime * 2^n), with n = 0 for the first retry. Defaults to 1 second.
 	retryWaitTime time.Duration
 
-	// retryMaxWaitTime is the maximum time to wait before retrying the request. Defaults to 30 seconds.
+	// retryMaxWaitTime is the upper bound of the backoff wait. Defaults to 30 seconds. A Retry-After header
+	// replaces the backoff wait, and is honored up to 30 seconds.
 	retryMaxWaitTime time.Duration
+
+	// retryBudget bounds a call with its retries: no retry starts when the time since the first attempt
+	// plus the wait before the retry would exceed it. Defaults to 90 seconds.
+	retryBudget time.Duration
 }
 
 // defaultOptions returns the default options for the ZenRows Fetch API client.
@@ -55,6 +58,7 @@ func defaultOptions() options {
 			maxRetryCount:    defaultMaxRetryCount,
 			retryWaitTime:    defaultRetryWaitTime,
 			retryMaxWaitTime: defaultRetryMaxWaitTime,
+			retryBudget:      defaultRetryBudget,
 		},
 	}
 }
@@ -88,24 +92,36 @@ func WithAPIKey(apiKey string) Option {
 	})
 }
 
-// WithMaxRetryCount returns an Option which configures the maximum number of retries to perform.
+// WithMaxRetryCount returns an Option which configures the maximum number of retries to perform. Defaults to 2; set 0 to
+// turn retries off.
 func WithMaxRetryCount(maxRetryCount int) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.maxRetryCount = maxRetryCount
 	})
 }
 
-// WithRetryWaitTime returns an Option which configures the time to wait before retrying the request.
+// WithRetryWaitTime returns an Option which configures the base of the exponential backoff between retries: retry n waits a
+// random time between 250ms and min(RetryMaxWaitTime, RetryWaitTime * 2^n), with n = 0 for the first retry. Defaults to 1 second.
 func WithRetryWaitTime(retryWaitTime time.Duration) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.retryWaitTime = retryWaitTime
 	})
 }
 
-// WithRetryMaxWaitTime returns an Option which configures the maximum time to wait before retrying the request.
+// WithRetryMaxWaitTime returns an Option which configures the maximum backoff wait before a retry. Defaults to 30 seconds.
+// A Retry-After header sent by the API replaces the backoff wait, and is honored up to 30 seconds.
 func WithRetryMaxWaitTime(retryMaxWaitTime time.Duration) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.retryMaxWaitTime = retryMaxWaitTime
+	})
+}
+
+// WithRetryBudget returns an Option which bounds the time a call spends on retries: no retry starts when the time since the
+// first attempt plus the wait before the retry would exceed it. It does not cut an attempt short. Defaults to 90 seconds; a
+// budget of zero or less allows no retries.
+func WithRetryBudget(retryBudget time.Duration) Option {
+	return newFuncDialOption(func(o *options) {
+		o.retryOptions.retryBudget = retryBudget
 	})
 }
 

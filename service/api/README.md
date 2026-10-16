@@ -205,9 +205,10 @@ You can customize the client using different options:
 
 - `WithAPIKey(apiKey string)`: Sets the API key for authentication. If not provided, the SDK will look for
 the `ZENROWS_API_KEY` environment variable.
-- `WithMaxRetryCount(maxRetryCount int)`: Sets the maximum number of retries for failed requests. _Default is 0 (no retries)._
-- `WithRetryWaitTime(retryWaitTime time.Duration)`: Sets the time to wait before retrying a request. _Default is 5 second._
-- `WithRetryMaxWaitTime(retryMaxWaitTime time.Duration)`: Sets the maximum time to wait for retries. _Default is 30 seconds._
+- `WithMaxRetryCount(maxRetryCount int)`: Sets the maximum number of retries for failed requests. _Default is 2; set 0 to turn retries off._
+- `WithRetryWaitTime(retryWaitTime time.Duration)`: Sets the base of the exponential backoff between retries. _Default is 1 second._
+- `WithRetryMaxWaitTime(retryMaxWaitTime time.Duration)`: Sets the maximum backoff wait before a retry. _Default is 30 seconds._
+- `WithRetryBudget(retryBudget time.Duration)`: Bounds the time a call spends on retries. _Default is 90 seconds._
 - `WithMaxConcurrentRequests(maxConcurrentRequests int)`: Limits the number of concurrent requests. _Default is 5._ 
 Make sure this value does not exceed your plan's concurrency limit, as it may result in _429 Too Many Requests_ errors.
 
@@ -299,11 +300,24 @@ done
 
 #### Retrying
 
-The SDK supports automatic retries for failed requests. You can configure the maximum number of retries and the
-wait time between retries using the `WithMaxRetryCount`, `WithRetryWaitTime`, and `WithRetryMaxWaitTime` options.
+By default, the client retries a failed request up to 2 times. It retries only failures that another try can fix,
+and none of them is charged:
 
-A backoff strategy is used to increase the wait time between retries, starting at the `RetryWaitTime` and doubling
-the wait time for each subsequent retry until it reaches the `RetryMaxWaitTime`.
+- `429 Too Many Requests`, `502 Bad Gateway`, `503 Service Unavailable` and `504 Gateway Timeout`.
+- A connection error before any response arrived.
+
+It never retries a timeout or a canceled context, because the API keeps working on the request and may still charge
+it. It never retries any other status either, including every `422`.
+
+Before each retry, the client waits:
+
+- the `Retry-After` the API sent, in seconds, up to 30 seconds; or otherwise
+- a random time between 250ms and `min(RetryMaxWaitTime, RetryWaitTime * 2^n)`, where `n` is 0 for the first retry
+  ("full jitter", so many clients do not retry at the same moment).
+
+No retry starts when the time since the first attempt plus the next wait would exceed the retry budget (90 seconds by
+default). Configure all of this with `WithMaxRetryCount`, `WithRetryWaitTime`, `WithRetryMaxWaitTime` and
+`WithRetryBudget`, and turn retries off with `WithMaxRetryCount(0)`.
 
 See the [example](examples/retries/main.go) below for a demonstration of how to use the SDK with retries:
 
@@ -329,8 +343,8 @@ func main() {
 		scraperapi.WithAPIKey("YOUR_API_KEY"),
 		scraperapi.WithMaxConcurrentRequests(maxConcurrentRequests),
 		scraperapi.WithMaxRetryCount(5),                 // retry up to five times
-		scraperapi.WithRetryWaitTime(20*time.Second),    // waiting at least 20s between retries (just for demonstration purposes!)
-		scraperapi.WithRetryMaxWaitTime(25*time.Second), // and waiting a maximum of 20s between retries
+		scraperapi.WithRetryWaitTime(2*time.Second),     // with a backoff that starts at up to 2s (just for demonstration purposes!)
+		scraperapi.WithRetryMaxWaitTime(10*time.Second), // and waits at most 10s between retries
 	)
 
 	var wg sync.WaitGroup
