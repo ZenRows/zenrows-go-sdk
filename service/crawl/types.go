@@ -67,10 +67,15 @@ const (
 	RunErrorInsufficientCredits RunErrorCode = "insufficient_credits"
 	//nolint:gosec // G101: an error code the API answers with, not a credential.
 	RunErrorAPIKeyCapReached RunErrorCode = "api_key_cap_reached"
+	// RunErrorSeedUnreachable means the start page could not be reached, was blocked, or came
+	// back empty, with no visible text and no link.
 	RunErrorSeedUnreachable  RunErrorCode = "seed_unreachable"
 	RunErrorDomainNotAllowed RunErrorCode = "domain_not_allowed"
-	RunErrorNoItemsFound     RunErrorCode = "no_items_found"
-	RunErrorInternalError    RunErrorCode = "internal_error"
+	// RunErrorNoItemsFound means the crawl read the start page but found no data it could use, so
+	// it had nothing to follow; start from a listing or product page. A crawl that returns nothing
+	// for any other reason is not a failure: it ends StatusCompleted with no results.
+	RunErrorNoItemsFound  RunErrorCode = "no_items_found"
+	RunErrorInternalError RunErrorCode = "internal_error"
 )
 
 // IsKnown reports whether c is one of the RunErrorCode constants this SDK version defines.
@@ -145,7 +150,8 @@ type CreateParams struct {
 	// MaxPages stops the crawl once it has fetched this many pages, 1 to 100,000 (API default
 	// 100). It bounds what the crawl costs: each fetch is one request on your account.
 	MaxPages int `json:"max_pages,omitempty"`
-	// IncludePatterns keeps a URL only if it contains at least one of these substrings.
+	// IncludePatterns keeps a URL only if it contains at least one of these substrings. A crawl
+	// whose patterns reject every link ends StatusCompleted with no results and a nil Error.
 	IncludePatterns []string `json:"include_patterns,omitempty"`
 	// ExcludePatterns drops a URL containing any of these substrings, even if it is included.
 	ExcludePatterns []string `json:"exclude_patterns,omitempty"`
