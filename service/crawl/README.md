@@ -12,8 +12,13 @@ A **crawl** is one run from one start URL. It walks up to `Depth` link hops (no 
 leave `Depth` out), keeps the URLs that match `IncludePatterns` (and none of `ExcludePatterns`),
 and stops at `MaxItems` kept URLs or `MaxPages` fetched pages (100 each by default). It runs
 asynchronously: `Create` returns at once with `StatusRunning`, and the crawl ends
-`StatusCompleted`, `StatusStopped` (you called `Stop`) or `StatusFailed` (`Crawl.Error` says why). With `OutputFormat: crawl.OutputFormatHTML`, each kept
-URL's page is fetched too. A crawl stays on the start URL's registrable domain; subdomains count.
+`StatusCompleted`, `StatusStopped` (you called `Stop`, or the account ran out of credits or the
+API key hit a credit cap: then `StopReason` is empty and `Crawl.Error.Code` is
+`RunErrorInsufficientCredits` or `RunErrorAPIKeyCapReached`) or `StatusFailed` (`Crawl.Error`
+says why). A crawl whose pages held nothing new to follow (no link, only links to other sites,
+or only links the patterns reject) ends `StatusCompleted` with no results and a nil `Error`:
+check the patterns against the URLs the start page links to. With
+`OutputFormat: crawl.OutputFormatHTML`, each kept URL's page is fetched too. A crawl stays on the start URL's registrable domain; subdomains count.
 
 ## Installation
 
@@ -110,7 +115,8 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
   crawl it yields what was kept so far and stops at the first empty page.
 - `Wait(ctx, crawlID, WaitOptions)` polls until the crawl ends (2s, x1.5 per poll, capped at 15s)
   or `WaitOptions.Timeout` (default 600s) runs out. On timeout it returns the crawl, still
-  `StatusRunning`, without an error, and does not stop it. A failed crawl is returned, not an error.
+  `StatusRunning`, without an error, and does not stop it. A failed crawl is returned, not an error,
+  and so is a crawl stopped on credits; read `Crawl.Error` on either.
 - `List(ctx, ListOptions)` reads one page of the account's crawls, newest first. Pass
   `NextCursor` as `ListOptions.Cursor` for the next page; it is empty on the last page.
 - `Stop(ctx, crawlID)` stops a running crawl; on a crawl that already ended it returns the crawl

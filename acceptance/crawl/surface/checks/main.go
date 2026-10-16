@@ -22,7 +22,7 @@ import (
 	"github.com/zenrows/zenrows-go-sdk/service/crawl"
 )
 
-// noMatch is an include pattern no URL contains: the crawl keeps nothing and fails (check 19).
+// noMatch is an include pattern no URL contains: the crawl keeps nothing and completes (check 19).
 const noMatch = "/crawl-acceptance-matches-nothing/"
 
 // documentedDefault is the default the README documents for MaxPages and MaxItems (check 21).
@@ -663,7 +663,7 @@ func main() {
 		return outcome{st, js(codes), "12, 13, 15, and a 502 with no body from the stand-in"}
 	})
 
-	run("19", "Failed crawl", "a crawl that keeps nothing ends failed (no_items_found); Wait returns it, not an error", true, func() outcome {
+	run("19", "Patterns match nothing", "a crawl whose patterns match nothing ends completed with 0 results and no error", true, func() outcome {
 		c, err := create(crawl.CreateParams{URL: url0, Depth: 1, IncludePatterns: []string{noMatch}})
 		if err != nil {
 			return outcome{"FAIL", esum(err), ""}
@@ -673,8 +673,15 @@ func main() {
 		if err != nil {
 			return outcome{"FAIL", "Wait returned an error: " + esum(err), ""}
 		}
-		ok := w.Status == crawl.StatusFailed && w.Error != nil && w.Error.Code == crawl.RunErrorNoItemsFound && w.Error.Detail != ""
-		return outcome{passIf(ok), fmt.Sprintf("%s: %s; error %s; returned, no Go error", c.CrawlID, w.Status, js(w.Error)), js(w)}
+		n := 0
+		for _, err := range client.Results(ctx, c.CrawlID, crawl.ResultsOptions{}) {
+			if err != nil {
+				return outcome{"FAIL", "Results returned an error: " + esum(err), ""}
+			}
+			n++
+		}
+		ok := w.Status == crawl.StatusCompleted && w.Error == nil && w.Coverage.ItemsFound == 0 && n == 0
+		return outcome{passIf(ok), fmt.Sprintf("%s: %s; items_found %d, %d results; error %s", c.CrawlID, w.Status, w.Coverage.ItemsFound, n, js(w.Error)), js(w)}
 	})
 	run("21", "Documented defaults", fmt.Sprintf("a create without MaxPages and MaxItems echoes the documented default (%d)", documentedDefault), true, func() outcome {
 		if F == nil {

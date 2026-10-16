@@ -13,9 +13,13 @@ const (
 	// StatusCompleted means the crawl did what the request asked: nothing was left to open, or
 	// it reached MaxItems or MaxPages (StopReason names the limit).
 	StatusCompleted Status = "completed"
-	// StatusStopped means the caller stopped it with Client.Stop (StopReason is StopReasonUser).
+	// StatusStopped means the caller stopped it with Client.Stop (StopReason is StopReasonUser),
+	// or it ended because the account ran out of credits or the API key hit a credit cap
+	// (StopReason is empty, and Crawl.Error carries RunErrorInsufficientCredits or
+	// RunErrorAPIKeyCapReached). The URLs kept before the stop stay readable.
 	StatusStopped Status = "stopped"
-	// StatusFailed means the run failed; Crawl.Error says why. The URLs kept so far stay readable.
+	// StatusFailed means the crawl ended on any other error; Crawl.Error says why. The URLs kept
+	// so far stay readable.
 	StatusFailed Status = "failed"
 )
 
@@ -30,7 +34,8 @@ func (s Status) IsKnown() bool {
 }
 
 // StopReason is what ended a crawl before nothing was left to open. Absent when nothing was
-// left, and on a failed crawl.
+// left, on a failed crawl, and on a crawl that stopped because credits ran out or the API key
+// hit a credit cap (that one carries Crawl.Error instead).
 // The server may add values not listed here, and they decode as-is; callers must handle
 // unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type StopReason string
@@ -51,7 +56,9 @@ func (r StopReason) IsKnown() bool {
 	}
 }
 
-// RunErrorCode is why a crawl failed, carried by Crawl.Error on a StatusFailed crawl.
+// RunErrorCode is why a crawl failed, carried by Crawl.Error on a StatusFailed crawl, or why it
+// stopped on credits: RunErrorInsufficientCredits and RunErrorAPIKeyCapReached come with
+// StatusStopped.
 // The server may add values not listed here, and they decode as-is; callers must handle
 // unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
 type RunErrorCode string
@@ -60,10 +67,15 @@ const (
 	RunErrorInsufficientCredits RunErrorCode = "insufficient_credits"
 	//nolint:gosec // G101: an error code the API answers with, not a credential.
 	RunErrorAPIKeyCapReached RunErrorCode = "api_key_cap_reached"
+	// RunErrorSeedUnreachable means the start page could not be reached, was blocked, or came
+	// back empty, with no visible text and no link.
 	RunErrorSeedUnreachable  RunErrorCode = "seed_unreachable"
 	RunErrorDomainNotAllowed RunErrorCode = "domain_not_allowed"
-	RunErrorNoItemsFound     RunErrorCode = "no_items_found"
-	RunErrorInternalError    RunErrorCode = "internal_error"
+	// RunErrorNoItemsFound means the crawl read the start page but found no data it could use, so
+	// it had nothing to follow; start from a listing or product page. A crawl that returns nothing
+	// for any other reason is not a failure: it ends StatusCompleted with no results.
+	RunErrorNoItemsFound  RunErrorCode = "no_items_found"
+	RunErrorInternalError RunErrorCode = "internal_error"
 )
 
 // IsKnown reports whether c is one of the RunErrorCode constants this SDK version defines.
@@ -138,7 +150,8 @@ type CreateParams struct {
 	// MaxPages stops the crawl once it has fetched this many pages, 1 to 100,000 (API default
 	// 100). It bounds what the crawl costs: each fetch is one request on your account.
 	MaxPages int `json:"max_pages,omitempty"`
-	// IncludePatterns keeps a URL only if it contains at least one of these substrings.
+	// IncludePatterns keeps a URL only if it contains at least one of these substrings. A crawl
+	// whose patterns reject every link ends StatusCompleted with no results and a nil Error.
 	IncludePatterns []string `json:"include_patterns,omitempty"`
 	// ExcludePatterns drops a URL containing any of these substrings, even if it is included.
 	ExcludePatterns []string `json:"exclude_patterns,omitempty"`
@@ -160,8 +173,10 @@ type Coverage struct {
 	ItemsFound   int `json:"items_found"`
 }
 
-// RunError is why a crawl failed. Present only when Status is StatusFailed. It is part of the
-// crawl, not an error response.
+// RunError is why a crawl failed, or why it stopped because the account ran out of credits or
+// the API key hit a credit cap. Present when Status is StatusFailed, and when it is
+// StatusStopped with Code RunErrorInsufficientCredits or RunErrorAPIKeyCapReached. It is part of
+// the crawl, not an error response.
 type RunError struct {
 	Code   RunErrorCode `json:"code"`
 	Detail string       `json:"detail"`

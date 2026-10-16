@@ -7,6 +7,7 @@
   "separate-pull-requests": true,
   "skip-changelog": true,
   "pull-request-title-pattern": "chore: release${component} ${version}",
+  "last-release-sha": "aabbb7e2ecd7f68289944ee45669582be94654e8",
   "changelog-sections": [
     {
       "type": "feat",
@@ -66,10 +67,12 @@
       "version-file": "version/version.go"
     },
     "service/batch": {
-      "component": "service/batch"
+      "component": "service/batch",
+      "version-file": "version/version.go"
     },
     "service/crawl": {
-      "component": "service/crawl"
+      "component": "service/crawl",
+      "version-file": "version/version.go"
     }
   }
 }
