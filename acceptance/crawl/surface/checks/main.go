@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -683,13 +684,61 @@ func main() {
 		return outcome{passIf(ok), fmt.Sprintf("the API applied max_pages %d, max_items %d; documented %d", F.MaxPages, F.MaxItems, documentedDefault), ""}
 	})
 
+	run("22", "Discovery", `Create with Discovery ["links"] is echoed back, and a create without it reads ["links"]`, true, func() outcome {
+		p := base
+		p.MaxItems, p.MaxPages = 1, 1
+		p.Discovery = []crawl.DiscoveryStrategy{crawl.DiscoveryLinks}
+		given, err := create(p)
+		if err != nil {
+			return outcome{"FAIL", "create with Discovery: " + esum(err), ""}
+		}
+		_, _ = client.Stop(ctx, given.CrawlID)
+		q := base
+		q.MaxItems, q.MaxPages = 1, 1
+		leftOut, err := create(q)
+		if err != nil {
+			return outcome{"FAIL", "create without Discovery: " + esum(err), ""}
+		}
+		_, _ = client.Stop(ctx, leftOut.CrawlID)
+		one := []crawl.DiscoveryStrategy{crawl.DiscoveryLinks}
+		ok := slices.Equal(given.Discovery, one) && slices.Equal(leftOut.Discovery, one)
+		return outcome{passIf(ok), fmt.Sprintf("asked %v, left out %v", given.Discovery, leftOut.Discovery), ""}
+	})
+	run("23", "Content as a file", "Content with AsDownload() returns the same page as Content without it", true, func() outcome {
+		if B == nil {
+			return outcome{"SKIP", "no html crawl to read a page from", ""}
+		}
+		cu := ""
+		for r, err := range client.Results(ctx, B.CrawlID, crawl.ResultsOptions{}) {
+			if err == nil && r.ContentURL != "" {
+				cu = r.ContentURL
+				break
+			}
+		}
+		if cu == "" {
+			return outcome{"SKIP", "no result had been fetched", ""}
+		}
+		plain, err1 := client.Content(ctx, B.CrawlID, cu)
+		asFile, err2 := client.Content(ctx, B.CrawlID, cu, crawl.AsDownload())
+		if err1 != nil || err2 != nil {
+			return outcome{"FAIL", esum(errors.Join(err1, err2)), ""}
+		}
+		ok := len(plain) > 0 && string(plain) == string(asFile)
+		return outcome{passIf(ok), fmt.Sprintf("same %d bytes with and without AsDownload()", len(plain)), ""}
+	})
+	run("24", "Run error codes", "api_key_cap_reached is a named RunErrorCode this version knows", false, func() outcome {
+		c := crawl.RunErrorCode("api_key_cap_reached")
+		ok := c == crawl.RunErrorAPIKeyCapReached && c.IsKnown()
+		return outcome{passIf(ok), fmt.Sprintf("%q IsKnown %v", c, c.IsKnown()), ""}
+	})
+
 	naming := map[string]any{
 		"operations": map[string]string{"create": "Create", "get": "Get", "list": "List", "results": "Results", "content": "Content",
 			"download": "Download", "stop": "Stop", "wait": "Wait"},
 		"params": map[string]string{"url": "URL", "depth": "Depth", "max_items": "MaxItems", "max_pages": "MaxPages",
 			"include_patterns": "IncludePatterns", "exclude_patterns": "ExcludePatterns", "output_format": "OutputFormat",
-			"idempotency_key": "IdempotencyKey", "cursor": "Cursor", "limit": "Limit", "timeout": "Timeout",
-			"content_id": "contentID"},
+			"discovery": "Discovery", "idempotency_key": "IdempotencyKey", "cursor": "Cursor", "limit": "Limit",
+			"timeout": "Timeout", "content_id": "contentID", "download": "AsDownload"},
 	}
 	b, _ := json.MarshalIndent(naming, "", "  ")
 	_ = os.WriteFile("/results/naming.json", b, 0o644)

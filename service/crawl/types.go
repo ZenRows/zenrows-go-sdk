@@ -58,17 +58,19 @@ type RunErrorCode string
 
 const (
 	RunErrorInsufficientCredits RunErrorCode = "insufficient_credits"
-	RunErrorSeedUnreachable     RunErrorCode = "seed_unreachable"
-	RunErrorDomainNotAllowed    RunErrorCode = "domain_not_allowed"
-	RunErrorNoItemsFound        RunErrorCode = "no_items_found"
-	RunErrorInternalError       RunErrorCode = "internal_error"
+	//nolint:gosec // G101: an error code the API answers with, not a credential.
+	RunErrorAPIKeyCapReached RunErrorCode = "api_key_cap_reached"
+	RunErrorSeedUnreachable  RunErrorCode = "seed_unreachable"
+	RunErrorDomainNotAllowed RunErrorCode = "domain_not_allowed"
+	RunErrorNoItemsFound     RunErrorCode = "no_items_found"
+	RunErrorInternalError    RunErrorCode = "internal_error"
 )
 
 // IsKnown reports whether c is one of the RunErrorCode constants this SDK version defines.
 func (c RunErrorCode) IsKnown() bool {
 	switch c {
-	case RunErrorInsufficientCredits, RunErrorSeedUnreachable, RunErrorDomainNotAllowed, RunErrorNoItemsFound,
-		RunErrorInternalError:
+	case RunErrorInsufficientCredits, RunErrorAPIKeyCapReached, RunErrorSeedUnreachable, RunErrorDomainNotAllowed,
+		RunErrorNoItemsFound, RunErrorInternalError:
 		return true
 	default:
 		return false
@@ -101,8 +103,26 @@ func (c ContentStatus) IsKnown() bool {
 // empty for URLs only.
 type OutputFormat string
 
-// OutputFormatHTML returns each kept URL's page HTML, as fetched.
-const OutputFormatHTML OutputFormat = "html"
+const (
+	// OutputFormatHTML returns each kept URL's page HTML, as fetched.
+	OutputFormatHTML OutputFormat = "html"
+	// OutputFormatMarkdown returns each kept URL's page converted to Markdown.
+	OutputFormatMarkdown OutputFormat = "markdown"
+)
+
+// DiscoveryStrategy is how a crawl finds the URLs it follows on each page it walks.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
+type DiscoveryStrategy string
+
+// DiscoveryLinks follows the links in each page's HTML. It is what a crawl runs with when
+// CreateParams.Discovery is empty.
+const DiscoveryLinks DiscoveryStrategy = "links"
+
+// IsKnown reports whether d is one of the DiscoveryStrategy constants this SDK version defines.
+func (d DiscoveryStrategy) IsKnown() bool {
+	return d == DiscoveryLinks
+}
 
 // CreateParams is the body for Client.Create. Only the fields you set are sent; the API applies
 // its defaults to the rest.
@@ -122,8 +142,11 @@ type CreateParams struct {
 	IncludePatterns []string `json:"include_patterns,omitempty"`
 	// ExcludePatterns drops a URL containing any of these substrings, even if it is included.
 	ExcludePatterns []string `json:"exclude_patterns,omitempty"`
-	// OutputFormat fetches each kept URL's page too. Empty means URLs only.
+	// OutputFormat fetches each kept URL's page too, in this format. Empty means URLs only.
 	OutputFormat OutputFormat `json:"output_format,omitempty"`
+	// Discovery is how the crawl finds the URLs it follows on each page it walks. Leave it
+	// empty for DiscoveryLinks, which follows the links in the page's HTML.
+	Discovery []DiscoveryStrategy `json:"discovery,omitempty"`
 	// IdempotencyKey (up to 255 characters) makes a retry safe: the same key with the same
 	// body answers with the crawl the first request created. It also lets the client retry the
 	// create on transient failures.
@@ -153,16 +176,19 @@ type Crawl struct {
 	URL        string     `json:"url"`
 	// Depth is the link-hop limit the crawl was created with. Nil means no depth limit: the
 	// create left Depth out.
-	Depth             *int         `json:"depth,omitempty"`
-	MaxItems          int          `json:"max_items"`
-	MaxPages          int          `json:"max_pages"`
-	IncludePatterns   []string     `json:"include_patterns,omitempty"`
-	ExcludePatterns   []string     `json:"exclude_patterns,omitempty"`
-	OutputFormat      OutputFormat `json:"output_format,omitempty"`
-	Coverage          Coverage     `json:"coverage"`
-	DuplicatesRemoved int          `json:"duplicates_removed,omitempty"`
-	CreatedAt         string       `json:"created_at"`
-	FinishedAt        string       `json:"finished_at,omitempty"`
+	Depth           *int         `json:"depth,omitempty"`
+	MaxItems        int          `json:"max_items"`
+	MaxPages        int          `json:"max_pages"`
+	IncludePatterns []string     `json:"include_patterns,omitempty"`
+	ExcludePatterns []string     `json:"exclude_patterns,omitempty"`
+	OutputFormat    OutputFormat `json:"output_format,omitempty"`
+	// Discovery is the strategies the crawl finds URLs with. It reads ["links"] when the
+	// create left it out, and is empty when the server does not send the field.
+	Discovery         []DiscoveryStrategy `json:"discovery,omitempty"`
+	Coverage          Coverage            `json:"coverage"`
+	DuplicatesRemoved int                 `json:"duplicates_removed,omitempty"`
+	CreatedAt         string              `json:"created_at"`
+	FinishedAt        string              `json:"finished_at,omitempty"`
 }
 
 // Result is one URL a crawl kept.
