@@ -113,7 +113,9 @@ fmt.Println(estimate) // "1 credits (1 tasks)"
 Set a job's webhook at submit time (`Webhook` in the submit options) or later with
 `JobRef.SetWebhook(ctx, url, signature)` / `Client.SetJobWebhook(ctx, jobID, url, signature)`.
 The signing choice is a required argument, so changing only the URL can't turn signing off.
-`PutJobWebhook` is deprecated: a `WebhookConfig` without `Signature` set sends `false`.
+`Client.SetJobWebhookURL(ctx, jobID, url)` changes only the URL and keeps the current signing
+choice (off when the job has no webhook yet). `PutJobWebhook` is deprecated: a `WebhookConfig`
+without `Signature` set sends `false`.
 
 A job's webhook gets one event when a run completes or fails on its own
 (`WebhookEventRunCompleted` or `WebhookEventRunFailed`); stopping a run sends none. Each attempt
@@ -215,7 +217,7 @@ Jobs: `ListJobs`/`IterJobs`, `GetJob`, `DeleteJob`, `AddTasks`/`AddTasksWithOpti
 `GetResults`/`IterResults` (leave `RunID` empty for the latest run), `GetTaskContent`,
 `GetTaskHistory`. Downloads: `DownloadToDir`, `DownloadToMemory` (concurrency-limited, with
 `max_files`/`max_bytes_per_file`/`max_count`/`max_total_bytes` safety caps). Webhooks:
-`GetJobWebhook`/`SetJobWebhook`/`DeleteJobWebhook`/`TestWebhook` (`PutJobWebhook` is deprecated),
+`GetJobWebhook`/`SetJobWebhook`/`SetJobWebhookURL`/`DeleteJobWebhook`/`TestWebhook` (`PutJobWebhook` is deprecated),
 plus the package-level `VerifyWebhookSignature` and `WebhookEvent` for receivers. HMAC signing keys:
 `ListHMACKeys`/`RotateHMACKey`/`FinalizeHMACKey`/`CancelHMACRotation`. CSV task input:
 `CreateJobInput`/`UploadCSV`. Results export: `StartResultsExport`/`GetResultsExport`/

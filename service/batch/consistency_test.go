@@ -223,3 +223,62 @@ func TestResultExpiredCode(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestSetJobWebhookURLKeepsTheSigningChoice(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		current string // GET response body; "" means 404
+		want    string
+	}{
+		{"signed stays signed", `{"url":"https://old.example","signature":true}`, `"signature":true`},
+		{"unsigned stays unsigned", `{"url":"https://old.example","signature":false}`, `"signature":false`},
+		{"no webhook yet", "", `"signature":false`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var sent string
+			client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					if tc.current == "" {
+						w.Header().Set("Content-Type", problemJSON)
+						w.WriteHeader(http.StatusNotFound)
+						_, _ = w.Write([]byte(`{"code":"not_found","status":404}`))
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(tc.current))
+					return
+				}
+				raw, _ := io.ReadAll(r.Body)
+				sent = string(raw)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(raw)
+			})
+			defer closeServer()
+			if _, err := client.SetJobWebhookURL(context.Background(), consistencyJobID, consistencyHook); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(sent, tc.want) || !strings.Contains(sent, consistencyHook) {
+				t.Fatalf("PUT body %s, want %s", sent, tc.want)
+			}
+		})
+	}
+}
+
+func TestSetJobWebhookURLStopsOnOtherErrors(t *testing.T) {
+	var puts int32
+	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			atomic.AddInt32(&puts, 1)
+		}
+		w.Header().Set("Content-Type", problemJSON)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"code":"unauthenticated","status":401}`))
+	})
+	defer closeServer()
+	if _, err := client.SetJobWebhookURL(context.Background(), consistencyJobID, consistencyHook); err == nil {
+		t.Fatal("want an error")
+	}
+	if atomic.LoadInt32(&puts) != 0 {
+		t.Fatal("must not PUT when the current config can't be read")
+	}
+}
