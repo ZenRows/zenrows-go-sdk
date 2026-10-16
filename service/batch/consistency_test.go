@@ -173,8 +173,19 @@ func TestRerunWaitForIngest(t *testing.T) {
 	if n := atomic.LoadInt32(&gets); n < 2 {
 		t.Fatalf("polled run_2 %d times", n)
 	}
+}
 
-	resp, err := client.Rerun(ctx, consistencyJobID, batch.RerunOptions{Status: string(batch.TaskStatusFailed)})
+func TestRerunWithoutWaitReturnsThe202Body(t *testing.T) {
+	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s: no wait was asked for", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"job_id":"job_1","latest_run":{"run_id":"run_2","status":"pending","ingest_status":"pending"}}`))
+	})
+	defer closeServer()
+	resp, err := client.Rerun(context.Background(), consistencyJobID, batch.RerunOptions{Status: string(batch.TaskStatusFailed)})
 	if err != nil {
 		t.Fatal(err)
 	}
