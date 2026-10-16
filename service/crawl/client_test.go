@@ -615,6 +615,26 @@ func TestWaitPollsUntilTerminal(t *testing.T) {
 	}
 }
 
+func TestWaitReturnsACrawlStoppedOnCredits(t *testing.T) {
+	for _, code := range []crawl.RunErrorCode{crawl.RunErrorInsufficientCredits, crawl.RunErrorAPIKeyCapReached} {
+		t.Run(string(code), func(t *testing.T) {
+			fastWait(t)
+			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, http.StatusOK, `{"crawl_id":"c_123","status":"stopped","error":{"code":"`+string(code)+`","detail":"d"},
+					"results":[],"next_cursor":null}`)
+			})
+
+			got, err := client.Wait(context.Background(), testCrawlID, crawl.WaitOptions{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Status != crawl.StatusStopped || got.StopReason != "" || got.Error == nil || got.Error.Code != code {
+				t.Fatalf("crawl = %+v", got)
+			}
+		})
+	}
+}
+
 func TestWaitReturnsTheRunningCrawlOnTimeout(t *testing.T) {
 	fastWait(t)
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

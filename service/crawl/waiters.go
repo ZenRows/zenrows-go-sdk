@@ -26,7 +26,8 @@ type WaitOptions struct {
 
 // Wait polls the crawl until its status is not StatusRunning or Timeout runs out, and returns
 // it. On timeout it returns the crawl as last read, still StatusRunning, without an error; the
-// crawl keeps running. A failed crawl is returned with its Error, not as a Go error. Every read,
+// crawl keeps running. A failed crawl is returned with its Error, not as a Go error, and so is a
+// crawl that stopped because credits ran out or the API key hit a credit cap. Every read,
 // the first included, runs within Timeout, so Wait never outlasts it. It returns an error when a
 // read fails, when ctx ends, or when Timeout runs out before the first read answers. Read the
 // results afterwards with Results.
