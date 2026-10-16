@@ -147,9 +147,8 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 // both responses to you as is, in one request; it never retries them with AutoParse.
 //
 // Extract also sends Adaptive Stealth Mode (wire param "mode=auto") by default, so a target
-// needing JSRender/
-// UsePremiumProxies (e.g. a site with heavy anti-bot defenses) escalates automatically
-// instead of failing with REQS002. It is skipped when params sets JSRender or
+// needing JSRender/UsePremiumProxies (e.g. a site with heavy anti-bot defenses) escalates
+// automatically instead of failing with REQS002. It is skipped when params sets JSRender or
 // UsePremiumProxies (the API rejects either combined with Adaptive Stealth Mode) or its own
 // Mode. Set params.DisableAdaptiveStealth to turn it off entirely.
 //
