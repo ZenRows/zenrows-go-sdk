@@ -13,8 +13,8 @@ const (
 	maxConcurrentRequests = 5                // run 5 scraping requests at the same time
 	totalRequests         = 10               // send a total of 10 scraping requests
 	maxRetryCount         = 5                // retry up to five times
-	retryWait             = 20 * time.Second // waiting at least 20s between retries (just for demonstration purposes!)
-	retryMaxWait          = 25 * time.Second // and waiting a maximum of 25s between retries
+	retryWait             = 2 * time.Second  // with a backoff that starts at up to 2s (just for demonstration purposes!)
+	retryMaxWait          = 10 * time.Second // and waits at most 10s between retries
 )
 
 func main() {
