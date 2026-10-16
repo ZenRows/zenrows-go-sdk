@@ -17,12 +17,29 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 )
 
 const apiKeyHeader = "X-API-Key" //nolint:gosec // header name, not a credential value
+
+const modulePath = "github.com/zenrows/zenrows-go-sdk/service/batch"
+
+// userAgent names this client and the module version the program built against, so the API can
+// tell SDK traffic apart. A build that does not record the version (a local checkout) says "dev".
+func userAgent() string {
+	version := "dev"
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range info.Deps {
+			if dep.Path == modulePath && dep.Version != "" {
+				version = dep.Version
+			}
+		}
+	}
+	return "zenrows-go-batch/" + version
+}
 
 // Client is the Zenrows Batch API client.
 type Client struct {
@@ -39,7 +56,11 @@ func NewClient(opts ...Option) *Client {
 
 	client.http = resty.New().
 		SetBaseURL(client.cfg.baseURL).
+		SetHeader("User-Agent", userAgent()).
 		SetHeader(apiKeyHeader, client.cfg.apiKey)
+	if client.cfg.timeout > 0 {
+		client.http.SetTimeout(client.cfg.timeout)
+	}
 
 	return client
 }
@@ -183,17 +204,20 @@ func (c *Client) DeleteJob(ctx context.Context, jobID string) error {
 	return c.deleteJob(ctx, jobID)
 }
 
-func (c *Client) postTasks(ctx context.Context, jobID string, tasks []Task, lastBatch bool) (*AddTasksResponse, error) {
+func (c *Client) postTasks(ctx context.Context, jobID string, tasks []Task, opts AddTasksOptions) (*AddTasksResponse, error) {
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
 	}
 	var result AddTasksResponse
 	path := fmt.Sprintf("/jobs/%s/tasks", jobID)
 	body := map[string]any{"tasks": tasks}
-	if lastBatch {
+	if opts.LastBatch {
 		body["last_batch"] = true
 	}
 	req := c.request(ctx, &result).SetBody(body)
+	if opts.IdempotencyKey != "" {
+		req.SetHeader("Idempotency-Key", opts.IdempotencyKey)
+	}
 	if err := c.do(ctx, req, http.MethodPost, path); err != nil {
 		return nil, err
 	}
@@ -203,7 +227,27 @@ func (c *Client) postTasks(ctx context.Context, jobID string, tasks []Task, last
 // AddTasks appends tasks to an open job's initial run. Fails once the job has been closed.
 // Pass lastBatch=true to close the job as part of this call.
 func (c *Client) AddTasks(ctx context.Context, jobID string, tasks []Task, lastBatch bool) (*AddTasksResponse, error) {
-	return c.postTasks(ctx, jobID, tasks, lastBatch)
+	return c.postTasks(ctx, jobID, tasks, AddTasksOptions{LastBatch: lastBatch})
+}
+
+// AddTasksOptions configures Client.AddTasksWithOptions / JobRef.AddTasksWithOptions.
+type AddTasksOptions struct {
+	// LastBatch closes the job as part of this call.
+	LastBatch bool
+	// IdempotencyKey (up to 128 characters) makes the call safe to retry. Once the first call
+	// has finished, a retry with the same key and the same body, within the key's 24-hour
+	// lifetime, returns the original response instead of appending the tasks again. The API
+	// checks the key right after confirming the job exists and is yours, before any check on
+	// the job's state, so the replay comes back even if the job has since been closed. A retry
+	// with a different body, or one sent while the first call is still running, gets a 409
+	// idempotency_key_conflict. With a key set, transient failures are retried automatically.
+	IdempotencyKey string
+}
+
+// AddTasksWithOptions is AddTasks with an Idempotency-Key. Without a key every call appends
+// its tasks, so a call whose response was lost can't be retried safely.
+func (c *Client) AddTasksWithOptions(ctx context.Context, jobID string, tasks []Task, opts AddTasksOptions) (*AddTasksResponse, error) {
+	return c.postTasks(ctx, jobID, tasks, opts)
 }
 
 func (c *Client) postClose(ctx context.Context, jobID string) (Job, error) {
@@ -295,11 +339,36 @@ func (c *Client) postRerun(ctx context.Context, jobID string, opts RerunOptions)
 	return result, nil
 }
 
-// Rerun starts a new run of a job — a full replay (opts.Status == "") or a partial retry
-// (opts.Status is a comma-separated status filter like "failed" or "failed,pending").
-func (c *Client) Rerun(ctx context.Context, jobID string, opts RerunOptions) (*RerunJobResponse, error) {
+// rerunAndWait posts the rerun, then, with opts.WaitForIngest, waits for the new run's task
+// rows to finish ingesting and returns that run's fresh state.
+func (c *Client) rerunAndWait(ctx context.Context, jobID string, opts RerunOptions) (RerunJobResponse, error) {
 	resp, err := c.postRerun(ctx, jobID, opts)
 	if err != nil {
+		return resp, err
+	}
+	if !opts.WaitForIngest || resp.LatestRun.IngestStatus != IngestStatusPending {
+		return resp, nil
+	}
+	run, err := c.waitForRunIngest(ctx, jobID, resp.LatestRun.RunID)
+	if err != nil {
+		return resp, err
+	}
+	resp.LatestRun = run
+	return resp, nil
+}
+
+// Rerun starts a new run of a job — a full replay (opts.Status == "") or a partial retry
+// (opts.Status is a comma-separated status filter like "failed" or "failed,pending"). Every
+// rerun is accepted asynchronously (202): the new run's task rows are written in the
+// background, and until LatestRun.IngestStatus is done its results pages are partial. Set
+// opts.WaitForIngest to return only once they are written. If that wait fails, the response is
+// still returned with the error.
+func (c *Client) Rerun(ctx context.Context, jobID string, opts RerunOptions) (*RerunJobResponse, error) {
+	resp, err := c.rerunAndWait(ctx, jobID, opts)
+	if err != nil {
+		if resp.LatestRun.RunID != "" {
+			return &resp, err
+		}
 		return nil, err
 	}
 	return &resp, nil
@@ -416,9 +485,6 @@ func (c *Client) GetResults(ctx context.Context, jobID string, opts GetResultsOp
 	if opts.Cursor != "" {
 		req.SetQueryParam("cursor", opts.Cursor)
 	}
-	if opts.Limit > 0 {
-		req.SetQueryParam("limit", fmt.Sprintf("%d", opts.Limit))
-	}
 	if err := c.do(ctx, req, http.MethodGet, path); err != nil {
 		return nil, err
 	}
@@ -430,7 +496,7 @@ func (c *Client) IterResults(ctx context.Context, jobID string, opts GetResultsO
 	return func(yield func(TaskResult, error) bool) {
 		cursor := opts.Cursor
 		for {
-			page, err := c.GetResults(ctx, jobID, GetResultsOptions{RunID: opts.RunID, Status: opts.Status, Limit: opts.Limit, Cursor: cursor})
+			page, err := c.GetResults(ctx, jobID, GetResultsOptions{RunID: opts.RunID, Status: opts.Status, Cursor: cursor})
 			if err != nil {
 				var zero TaskResult
 				yield(zero, err)
@@ -540,10 +606,14 @@ type WaitForRunOptions struct {
 	Timeout         time.Duration // defaults to 300s
 	PollInterval    time.Duration // defaults to 2s
 	MaxPollInterval time.Duration // defaults to 15s
+	// WaitThroughPause keeps polling while the run is paused. By default a paused run, which
+	// makes no progress until someone resumes it, ends the wait with a RunPausedError.
+	WaitThroughPause bool
 }
 
 // WaitForRun blocks until a run reaches one of opts.TargetStatuses, polling with jittered
-// exponential backoff.
+// exponential backoff. A paused run that hasn't reached a target status ends the wait at once:
+// it returns that run with a RunPausedError (see WaitForRunOptions.WaitThroughPause).
 func (c *Client) WaitForRun(ctx context.Context, jobID string, opts WaitForRunOptions) (Run, error) {
 	target := opts.TargetStatuses
 	if target == nil {
@@ -575,12 +645,10 @@ func (c *Client) WaitForRun(ctx context.Context, jobID string, opts WaitForRunOp
 		}
 		return *job.LatestRun, nil
 	}
+	stuck := func(r Run) bool { return runStuckPaused(r, target, opts) }
 	isDone := func(r Run) bool {
-		if r.Status == "" {
-			return false
-		}
 		// A status the caller named as a failure is an error, even when it is also a target.
-		return target[r.Status] && !opts.FailureStatuses[r.Status]
+		return r.Status != "" && ((target[r.Status] && !opts.FailureStatuses[r.Status]) || stuck(r))
 	}
 	var isFailure func(Run) bool
 	if opts.FailureStatuses != nil {
@@ -592,9 +660,20 @@ func (c *Client) WaitForRun(ctx context.Context, jobID string, opts WaitForRunOp
 		}
 	}
 
-	return pollUntil(ctx, fetch, isDone, isFailure, pollOptions{
+	run, err := pollUntil(ctx, fetch, isDone, isFailure, pollOptions{
 		Timeout: timeout, InitialInterval: pollInterval, MaxInterval: maxInterval,
 	})
+	if err == nil && stuck(run) {
+		return run, RunPausedError{Run: run}
+	}
+	return run, err
+}
+
+// runStuckPaused reports a run the waiter should stop on: paused, short of a target or failure
+// status, and the caller didn't ask to wait through pauses.
+func runStuckPaused(r Run, target map[RunStatus]bool, opts WaitForRunOptions) bool {
+	return !opts.WaitThroughPause && r.PauseState == PauseStatePaused &&
+		!target[r.Status] && !opts.FailureStatuses[r.Status]
 }
 
 // WaitForIngestOptions configures WaitForIngest.
@@ -607,8 +686,28 @@ type WaitForIngestOptions struct {
 // WaitForIngest blocks until the current run's async-carrier ingestion has finished writing
 // task rows. Large submissions return 202 Accepted and stream task rows into storage off the
 // request path; until that finishes, results pages may be partial and AddTasks on an open job
-// is rejected with 409. Runs that never ingested asynchronously are done on the first poll.
+// is rejected with 409. Runs that never ingested asynchronously are done on the first poll. A
+// run stopped mid-ingest is waited on until the API marks its ingestion done.
 func (c *Client) WaitForIngest(ctx context.Context, jobID string, opts WaitForIngestOptions) (Job, error) {
+	fetch := func(ctx context.Context) (Job, error) {
+		return c.getJobData(ctx, jobID)
+	}
+	isDone := func(j Job) bool {
+		return j.LatestRun == nil || ingestSettled(*j.LatestRun)
+	}
+
+	return pollUntil(ctx, fetch, isDone, nil, ingestPollOptions(opts))
+}
+
+// ingestSettled reports whether a run's task rows have stopped changing. A run that is stopped
+// or fails mid-ingest still reads ingest_status pending until the API finishes trimming its
+// totals, so only a deleted run ends the wait while ingestion is pending.
+func ingestSettled(run Run) bool {
+	return run.IngestStatus != IngestStatusPending || run.Status == RunStatusDeleted
+}
+
+// ingestPollOptions applies the WaitForIngest defaults.
+func ingestPollOptions(opts WaitForIngestOptions) pollOptions {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 300 * time.Second
@@ -621,19 +720,12 @@ func (c *Client) WaitForIngest(ctx context.Context, jobID string, opts WaitForIn
 	if maxInterval <= 0 {
 		maxInterval = 15 * time.Second
 	}
+	return pollOptions{Timeout: timeout, InitialInterval: pollInterval, MaxInterval: maxInterval}
+}
 
-	fetch := func(ctx context.Context) (Job, error) {
-		return c.getJobData(ctx, jobID)
-	}
-	isDone := func(j Job) bool {
-		run := j.LatestRun
-		if run == nil || TerminalRunStatuses[run.Status] {
-			return true
-		}
-		return run.IngestStatus != IngestStatusPending
-	}
-
-	return pollUntil(ctx, fetch, isDone, nil, pollOptions{
-		Timeout: timeout, InitialInterval: pollInterval, MaxInterval: maxInterval,
-	})
+// waitForRunIngest is WaitForIngest for one run by id, so a replayed rerun response waits on
+// the run it names, not on whichever run is now the job's latest.
+func (c *Client) waitForRunIngest(ctx context.Context, jobID, runID string) (Run, error) {
+	fetch := func(ctx context.Context) (Run, error) { return c.getRunData(ctx, jobID, runID) }
+	return pollUntil(ctx, fetch, ingestSettled, nil, ingestPollOptions(WaitForIngestOptions{}))
 }
