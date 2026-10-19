@@ -1,11 +1,15 @@
 package scraperapi_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -87,8 +91,10 @@ func TestDefaultClientRetriesTwice(t *testing.T) {
 }
 
 func TestRetriesEachRetryableStatus(t *testing.T) {
+	// A 422 with no problem code is not Extract's no_data_extracted, so it is retried.
 	for _, status := range []int{
 		http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout,
+		http.StatusInternalServerError, http.StatusUnprocessableEntity,
 	} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			server, got := newStatusServer(t, "", status, http.StatusOK)
@@ -107,7 +113,7 @@ func TestRetriesEachRetryableStatus(t *testing.T) {
 func TestDoesNotRetryOtherStatuses(t *testing.T) {
 	for _, status := range []int{
 		http.StatusBadRequest, http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden,
-		http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusInternalServerError,
+		http.StatusNotFound, http.StatusNotImplemented,
 	} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			server, got := newStatusServer(t, "", status)
@@ -230,27 +236,177 @@ func TestTimeoutIsNotRetried(t *testing.T) {
 	}
 }
 
-func TestConnectionErrorBeforeResponseIsRetried(t *testing.T) {
+// newDroppingServer reads each request, then closes the connection without an answer: the request
+// was sent, so the API may already be working on it.
+func newDroppingServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if hits.Add(1) == 1 {
-			// Drop the connection without answering.
-			conn, _, err := w.(http.Hijacker).Hijack()
-			if err == nil {
-				_ = conn.Close()
-			}
+		hits.Add(1)
+		_, _ = io.ReadAll(r.Body)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, &hits
+}
+
+func TestConnectionDroppedAfterTheRequestIsNotRetried(t *testing.T) {
+	t.Run("GET", func(t *testing.T) {
+		server, hits := newDroppingServer(t)
+		if _, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", nil); err == nil {
+			t.Fatal("expected an error")
+		}
+		if got := hits.Load(); got != 1 {
+			t.Fatalf("expected 1 attempt with no retry, got %d", got)
+		}
+	})
+	t.Run("POST with an Idempotency-Key", func(t *testing.T) {
+		server, hits := newDroppingServer(t)
+		if _, err := fastRetryClient(server.URL).Post(context.Background(), "https://example.com", idempotent(), formBody); err == nil {
+			t.Fatal("expected an error")
+		}
+		if got := hits.Load(); got != 1 {
+			t.Fatalf("expected 1 attempt with no retry, got %d", got)
+		}
+	})
+}
+
+// formBody is the request body the POST and PUT tests send.
+const formBody = "a=1"
+
+func idempotent() *scraperapi.RequestParameters {
+	return &scraperapi.RequestParameters{CustomHeaders: http.Header{"Idempotency-Key": []string{"key-1"}}}
+}
+
+// newBodyServer answers 503 to the first request and 200 after, and records each request body.
+func newBodyServer(t *testing.T) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var bodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		n := len(bodies)
+		mu.Unlock()
+		if n == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
-
-	res, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	t.Cleanup(server.Close)
+	return server, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(bodies)
 	}
-	if !res.IsSuccess() || hits.Load() != 2 {
-		t.Fatalf("expected the retry to succeed, got status %d after %d attempts", res.StatusCode(), hits.Load())
+}
+
+func TestPostAndPutAreNotRetriedWithoutAnIdempotencyKey(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		t.Run(method, func(t *testing.T) {
+			server, bodies := newBodyServer(t)
+			res, err := fastRetryClient(server.URL).Scrape(context.Background(), method, "https://example.com", nil, formBody)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.StatusCode() != http.StatusServiceUnavailable || len(bodies()) != 1 {
+				t.Fatalf("expected the 503 sent once, got status %d after %d attempts", res.StatusCode(), len(bodies()))
+			}
+		})
+	}
+}
+
+func TestPostWithAnIdempotencyKeyRetriesAReplayableBody(t *testing.T) {
+	cases := map[string]struct {
+		body any
+		want string
+	}{
+		"string": {formBody, formBody},
+		"bytes":  {[]byte(formBody), formBody},
+		"map":    {map[string]string{"a": "1"}, `{"a":"1"}`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			server, bodies := newBodyServer(t)
+			res, err := fastRetryClient(server.URL).Post(context.Background(), "https://example.com", idempotent(), tc.body)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !res.IsSuccess() {
+				t.Fatalf("expected the retry to succeed, got %d", res.StatusCode())
+			}
+			if got := bodies(); !slices.Equal(got, []string{tc.want, tc.want}) {
+				t.Fatalf("expected the same body twice, got %q", got)
+			}
+		})
+	}
+}
+
+// A one-shot io.Reader is read by the first attempt, so a retry would send an empty body.
+func TestPostWithAnIoReaderBodyIsNotRetried(t *testing.T) {
+	for name, body := range map[string]io.Reader{
+		"strings.Reader": strings.NewReader(formBody),
+		"bytes.Buffer":   bytes.NewBufferString(formBody),
+	} {
+		t.Run(name, func(t *testing.T) {
+			server, bodies := newBodyServer(t)
+			res, err := fastRetryClient(server.URL).Post(context.Background(), "https://example.com", idempotent(), body)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := bodies(); res.StatusCode() != http.StatusServiceUnavailable || !slices.Equal(got, []string{formBody}) {
+				t.Fatalf("expected the 503 sent once with its body, got status %d and bodies %q", res.StatusCode(), got)
+			}
+		})
+	}
+}
+
+func TestInvalidRetryOptionsFailEveryCall(t *testing.T) {
+	cases := map[string]scraperapi.Option{
+		"negative retry count":     scraperapi.WithMaxRetryCount(-1),
+		"zero retry wait time":     scraperapi.WithRetryWaitTime(0),
+		"negative retry wait time": scraperapi.WithRetryWaitTime(-time.Second),
+		"zero retry max wait time": scraperapi.WithRetryMaxWaitTime(0),
+		"zero retry budget":        scraperapi.WithRetryBudget(0),
+		"negative retry budget":    scraperapi.WithRetryBudget(-time.Second),
+	}
+	for name, opt := range cases {
+		t.Run(name, func(t *testing.T) {
+			server, got := newStatusServer(t, "", http.StatusOK)
+			client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("k"), opt)
+			_, err := client.Get(context.Background(), "https://example.com", nil)
+			var invalid scraperapi.InvalidOptionError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("expected an InvalidOptionError, got %v", err)
+			}
+			if got.count() != 0 {
+				t.Fatalf("expected no request, got %d", got.count())
+			}
+		})
+	}
+}
+
+// Canceling the caller's context during the wait before a retry returns at once and sends nothing more.
+func TestCancelDuringTheRetryWaitStopsTheCall(t *testing.T) {
+	server, got := newStatusServer(t, "30", http.StatusServiceUnavailable)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := fastRetryClient(server.URL).Get(ctx, "https://example.com", nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a deadline error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("expected the call to return when the context expired, took %v", elapsed)
+	}
+	if got.count() != 1 {
+		t.Fatalf("expected 1 attempt, got %d", got.count())
 	}
 }
 

@@ -206,9 +206,9 @@ You can customize the client using different options:
 - `WithAPIKey(apiKey string)`: Sets the API key for authentication. If not provided, the SDK will look for
 the `ZENROWS_API_KEY` environment variable.
 - `WithMaxRetryCount(maxRetryCount int)`: Sets the maximum number of retries for failed requests. _Default is 2; set 0 to turn retries off._
-- `WithRetryWaitTime(retryWaitTime time.Duration)`: Sets the base of the exponential backoff between retries. _Default is 1 second._
-- `WithRetryMaxWaitTime(retryMaxWaitTime time.Duration)`: Sets the maximum backoff wait before a retry. _Default is 30 seconds._
-- `WithRetryBudget(retryBudget time.Duration)`: Bounds the time a call spends on retries. _Default is 90 seconds._
+- `WithRetryWaitTime(retryWaitTime time.Duration)`: Sets the base of the exponential backoff between retries. Must be greater than zero. _Default is 1 second._
+- `WithRetryMaxWaitTime(retryMaxWaitTime time.Duration)`: Sets the maximum backoff wait before a retry. It does not limit a `Retry-After` wait. Must be greater than zero. _Default is 30 seconds._
+- `WithRetryBudget(retryBudget time.Duration)`: No retry starts after this time, counted from the first attempt. Must be greater than zero. _Default is 90 seconds._
 - `WithMaxConcurrentRequests(maxConcurrentRequests int)`: Limits the number of concurrent requests. _Default is 5._ 
 Make sure this value does not exceed your plan's concurrency limit, as it may result in _429 Too Many Requests_ errors.
 
@@ -220,6 +220,8 @@ The SDK provides custom error types for better error handling:
 - `InvalidHTTPMethodError`: Thrown when an unsupported HTTP method is used (e.g., when sending PATCH or DELETE requests).
 - `InvalidTargetURLError`: Thrown when an invalid target URL is provided (e.g., target URL is empty, or malformed).
 - `InvalidParameterError`: Thrown when invalid parameters are used in the request. See the error message for details.
+- `InvalidOptionError`: Returned by every call on a client created with an invalid option value (for example, `WithRetryBudget(0)`
+or `WithMaxRetryCount(-1)`). `NewClient` does not return an error, so the client reports it on each call and sends no request.
  
 ### Examples
 
@@ -300,24 +302,47 @@ done
 
 #### Retrying
 
-By default, the client retries a failed request up to 2 times. It retries only failures that another try can fix,
-and none of them is charged:
+By default, the client retries a failed request up to 2 times. `WithMaxRetryCount(0)` turns retries off.
 
-- `429 Too Many Requests`, `502 Bad Gateway`, `503 Service Unavailable` and `504 Gateway Timeout`.
-- A connection error before any response arrived.
+The client retries these failures:
 
-It never retries a timeout or a canceled context, because the API keeps working on the request and may still charge
-it. It never retries any other status either, including every `422`.
+1. A `429`, `500`, `502`, `503` or `504` response.
+2. A `422` response, except Extract's `no_data_extracted`, which is a final answer.
+3. A connection that failed before the request was sent: the connection was refused, the name did not resolve, the
+   connection timed out, or the network was unreachable.
+
+It never retries:
+
+1. Any other status.
+2. A connection that dropped after the request was sent (a reset or an EOF), or a read timeout. The API may already be
+   working on that request, and may charge it.
+3. A canceled or expired context.
+
+It retries only requests that are safe to send again:
+
+1. A `GET` request, always.
+2. A `POST` or `PUT` request only when it carries an `Idempotency-Key` header (set it in `RequestParameters.CustomHeaders`)
+   and a body the client can send again: no body, a `string`, a `[]byte`, or a struct or map that it encodes on each
+   attempt. A body passed as an `io.Reader` is read by the first attempt, so that request is never retried.
+3. Every other `POST` or `PUT` request is sent once.
 
 Before each retry, the client waits:
 
-- the `Retry-After` the API sent, in seconds, up to 30 seconds; or otherwise
-- a random time between 250ms and `min(RetryMaxWaitTime, RetryWaitTime * 2^n)`, where `n` is 0 for the first retry
-  ("full jitter", so many clients do not retry at the same moment).
+1. The `Retry-After` the API sent, when it is a whole number of seconds. The wait is at least 250ms and at most
+   30 seconds. That 30-second cap is fixed: `WithRetryMaxWaitTime` does not change it.
+2. Otherwise, a random time between 250ms and `max(250ms, min(RetryMaxWaitTime, RetryWaitTime * 2^n))`, where `n` is 0
+   for the first retry ("full jitter", so many clients do not retry at the same moment). With the defaults, the first
+   retry waits up to 1 second and the second up to 2 seconds. A `Retry-After` in any other form, such as a date or a
+   fraction, is ignored.
 
-No retry starts when the time since the first attempt plus the next wait would exceed the retry budget (90 seconds by
-default). Configure all of this with `WithMaxRetryCount`, `WithRetryWaitTime`, `WithRetryMaxWaitTime` and
-`WithRetryBudget`, and turn retries off with `WithMaxRetryCount(0)`.
+No retry starts after 90 seconds: the client does not start a retry when the time since the first attempt plus the next
+wait would pass the retry budget (`WithRetryBudget`, 90 seconds by default). The budget does not cut a running attempt
+short, so a call can run past it by one attempt. `Extract` and its AutoParse fallback share one budget.
+
+To stop a call, cancel its context: the wait before a retry ends at once, and the client sends no further request.
+
+`WithRetryWaitTime`, `WithRetryMaxWaitTime` and `WithRetryBudget` must be greater than zero, and `WithMaxRetryCount`
+must be 0 or more. A client created with an invalid value returns an `InvalidOptionError` from every call.
 
 See the [example](examples/retries/main.go) below for a demonstration of how to use the SDK with retries:
 
@@ -343,8 +368,8 @@ func main() {
 		scraperapi.WithAPIKey("YOUR_API_KEY"),
 		scraperapi.WithMaxConcurrentRequests(maxConcurrentRequests),
 		scraperapi.WithMaxRetryCount(5),                 // retry up to five times
-		scraperapi.WithRetryWaitTime(2*time.Second),     // with a backoff that starts at up to 2s (just for demonstration purposes!)
-		scraperapi.WithRetryMaxWaitTime(10*time.Second), // and waits at most 10s between retries
+		scraperapi.WithRetryWaitTime(2*time.Second),     // the first retry waits up to 2s, the second up to 4s, and so on
+		scraperapi.WithRetryMaxWaitTime(10*time.Second), // but no wait is longer than 10s
 	)
 
 	var wg sync.WaitGroup
@@ -354,8 +379,8 @@ func main() {
 			defer wg.Done()
 			now := time.Now() // store the time, to be able to print the elapsed duration
 
-			// target the https://httpbin.io/unstable endpoint, as it fails half of the times, so the retry mechanism takes care of
-			// making sure we eventually receive a successful request
+			// target the https://httpbin.io/unstable endpoint, which fails about half of the time. The API reports that failure
+			// with a status the client retries (a 500, or a 422 that is not no_data_extracted), so most requests succeed in the end
 			res, err := client.Get(context.Background(), "https://httpbin.io/unstable", &scraperapi.RequestParameters{})
 			if err != nil {
 				fmt.Println(i, err)
@@ -376,8 +401,10 @@ func main() {
 }
 ```
 
-This program will output the status of each request, and the elapsed time. As we've set the retry mechanism to retry
-up to five times, with a minimum wait time of 20 seconds and a maximum of 25 seconds, the output will look like this:
+This program prints the status of each request and its elapsed time. The `httpbin.io/unstable` endpoint fails about
+half of the time, and the API reports that failure with a status the client retries (a `500`, or a `422` that is not
+`no_data_extracted`). A request that needed retries takes longer, by the waits described above. The output looks like
+this (the times vary from run to run):
 
 ```
 [#6]: 200 OK (in 743.064708ms)
@@ -386,10 +413,10 @@ up to five times, with a minimum wait time of 20 seconds and a maximum of 25 sec
 [#5]: 200 OK (in 1.626613583s)
 [#8]: 200 OK (in 2.635505541s)
 [#4]: 200 OK (in 3.217849791s)
-[#9]: 200 OK (in 21.973982334s) <-- this request took longer because it had to retry 1 time
-[#3]: 200 OK (in 22.031445708s) <-- this request took longer because it had to retry 1 time
-[#7]: 200 OK (in 22.130371583s) <-- this request took longer because it had to retry 1 time
-[#0]: 200 OK (in 45.030251042s) <-- this request took longer because it had to retry 2 times
+[#9]: 200 OK (in 3.973982334s) <-- this request retried 1 time
+[#3]: 200 OK (in 4.031445708s) <-- this request retried 1 time
+[#7]: 200 OK (in 4.130371583s) <-- this request retried 1 time
+[#0]: 200 OK (in 8.030251042s) <-- this request retried 2 times
 done
 ```
 

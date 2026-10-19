@@ -53,16 +53,15 @@ func TestExtractDoesNotRetryNoDataExtracted(t *testing.T) {
 	}
 }
 
-// No 422 is retried: the API no longer sends a 422 that another try could fix.
-func TestOther422IsNotRetried(t *testing.T) {
+func TestOther422IsStillRetried(t *testing.T) {
 	server, hits := newRetryingServer(t, "application/problem+json", `{"code":"RESP001","title":"Could not get content"}`)
 
 	response, err := newRetryingClient(server.URL).Get(context.Background(), "https://example.com", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := hits.Load(); got != 1 {
-		t.Fatalf("expected 1 request, got %d", got)
+	if got := hits.Load(); got != 3 {
+		t.Fatalf("expected 3 requests (1 + 2 retries), got %d", got)
 	}
 	if response.IsNoDataExtracted() {
 		t.Fatal("expected IsNoDataExtracted to be false for RESP001")
