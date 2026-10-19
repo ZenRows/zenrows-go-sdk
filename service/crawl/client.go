@@ -34,8 +34,9 @@ const apiKeyHeader = "X-API-Key" //nolint:gosec // header name, not a credential
 
 const modulePath = "github.com/zenrows/zenrows-go-sdk/service/crawl"
 
-// userAgent names this client and the module version the program built against, so the API can
-// tell SDK traffic apart. A build that does not record the version (a local checkout) says "dev".
+// userAgent names the Go SDK and the module version the program built against, so the API can
+// tell SDK traffic apart. It is the User-Agent the scraping client sends, "zenrows-go/<version>". A
+// build that does not record the version (a local checkout) says "dev".
 func userAgent() string {
 	version := "dev"
 	if info, ok := debug.ReadBuildInfo(); ok {
@@ -45,7 +46,7 @@ func userAgent() string {
 			}
 		}
 	}
-	return "zenrows-go-crawl/" + version
+	return "zenrows-go/" + version
 }
 
 // A download line holds a URL plus its page's HTML: read with a 64 KiB buffer that may grow
