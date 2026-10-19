@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/zenrows/zenrows-go-sdk/service/batch"
@@ -17,24 +16,6 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*batch.Client, func(
 	server := httptest.NewServer(handler)
 	client := batch.NewClient(batch.WithBaseURL(server.URL), batch.WithAPIKey("test-key"))
 	return client, server.Close
-}
-
-func TestRequestsCarryTheSDKsUserAgent(t *testing.T) {
-	var got string
-	client, closeServer := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		got = r.Header.Get("User-Agent")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(batch.SubmitJobResponse{JobID: testJobID, Status: batch.JobStatusOpen})
-	})
-	defer closeServer()
-
-	if _, err := client.SubmitJob(context.Background(), batch.SubmitJobRequest{Status: batch.JobStatusOpen}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.HasPrefix(got, "zenrows-go/") {
-		t.Fatalf("User-Agent = %q, want it to start with zenrows-go/", got)
-	}
 }
 
 func TestSubmitJobOpenAcceptsMoreTasksLater(t *testing.T) {

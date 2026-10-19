@@ -17,30 +17,12 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
-	"runtime/debug"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 )
 
 const apiKeyHeader = "X-API-Key" //nolint:gosec // header name, not a credential value
-
-const modulePath = "github.com/zenrows/zenrows-go-sdk/service/batch"
-
-// userAgent names the Go SDK and the module version the program built against, so the API can
-// tell SDK traffic apart. Every client in this SDK sends "zenrows-go/<version>". A build that
-// does not record the version (a local checkout) says "dev".
-func userAgent() string {
-	version := "dev"
-	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, dep := range info.Deps {
-			if dep.Path == modulePath && dep.Version != "" {
-				version = dep.Version
-			}
-		}
-	}
-	return "zenrows-go/" + version
-}
 
 // Client is the Zenrows Batch API client.
 type Client struct {
@@ -57,8 +39,7 @@ func NewClient(opts ...Option) *Client {
 
 	client.http = resty.New().
 		SetBaseURL(client.cfg.baseURL).
-		SetHeader(apiKeyHeader, client.cfg.apiKey).
-		SetHeader("User-Agent", userAgent())
+		SetHeader(apiKeyHeader, client.cfg.apiKey)
 
 	return client
 }
