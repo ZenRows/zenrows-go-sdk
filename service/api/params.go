@@ -236,6 +236,9 @@ type RequestParameters struct {
 	// ReturnOriginalStatus will return the original status code of the response wthen the request is not successful. When a request is not
 	// successful, the ZenRows Fetch API will always return a 422 status code. If you enable this feature, the original status code will
 	// be returned instead.
+	//
+	// When it is set, the client retries no status at all, because every status then comes from the target site. It still
+	// retries a connection that failed before the request was sent.
 	ReturnOriginalStatus bool `json:"original_status,omitempty" structs:"original_status,omitempty" schema:"original_status"`
 
 	// SessionID is an integer between 0 and 99999 that can be used to group requests together. If you provide a SessionID, all requests
@@ -256,6 +259,8 @@ type RequestParameters struct {
 	//
 	// IMPORTANT: ZenRows Fetch API only charges for successful requests. If you use this feature, you will also be charged for
 	// unsuccessful requests matching the specified status codes.
+	//
+	// The client never retries a status listed here, because that status comes from the target site.
 	AllowedStatusCodes []int `json:"allowed_status_codes,omitempty" structs:"allowed_status_codes,omitempty" schema:"allowed_status_codes"`
 
 	// BlockResources will block the specified resources from loading (only available when using JSRender)

@@ -161,7 +161,7 @@ func newRetryResponse(c *Client, ctx context.Context, attempt, status int, retry
 func TestShouldRetryUsesZeroBasedExponent(t *testing.T) {
 	c := NewClient(WithAPIKey("k"), WithMaxRetryCount(5))
 	c.randN = randAtMax
-	ctx := c.withRetryCall(context.Background(), true)
+	ctx := c.withRetryCall(context.Background(), true, nil)
 	for attempt, want := range map[int]time.Duration{1: time.Second, 2: 2 * time.Second, 3: 4 * time.Second} {
 		resp := newRetryResponse(c, ctx, attempt, http.StatusServiceUnavailable, "")
 		if !c.shouldRetry(resp, nil) {
@@ -177,7 +177,7 @@ func TestShouldRetryBudgetCountsTheElapsedTime(t *testing.T) {
 	clock := newFakeClock()
 	c := NewClient(WithAPIKey("k"), WithMaxRetryCount(5))
 	c.now = clock.now
-	ctx := c.withRetryCall(context.Background(), true)
+	ctx := c.withRetryCall(context.Background(), true, nil)
 
 	clock.advance(89 * time.Second)
 	// 89s + 1s fits in the 90s budget, exactly.
@@ -378,6 +378,65 @@ func TestIsReplayable(t *testing.T) {
 	for _, tc := range cases {
 		if got := isReplayable(tc.method, tc.body); got != tc.want {
 			t.Fatalf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A connection that failed before the request was sent has no status, so original_status and
+// allowed_status_codes do not stop its retry.
+func TestConnectFailureIsRetriedWithTargetStatusParams(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedAddr := listener.Addr().String()
+	_ = listener.Close()
+
+	params := map[string]*RequestParameters{
+		"ReturnOriginalStatus": {ReturnOriginalStatus: true},
+		"AllowedStatusCodes":   {AllowedStatusCodes: []int{http.StatusServiceUnavailable}},
+	}
+	for name, p := range params {
+		t.Run(name, func(t *testing.T) {
+			c := NewClient(WithBaseURL("http://"+closedAddr), WithAPIKey("k"))
+			c.randN = randAtZero
+			var dials atomic.Int32
+			c.http.SetTransport(&http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				dials.Add(1)
+				return (&net.Dialer{}).DialContext(ctx, network, closedAddr)
+			}})
+
+			if _, err := c.Get(context.Background(), "https://example.com", p); err == nil {
+				t.Fatal("expected an error")
+			}
+			if got := dials.Load(); got != 3 {
+				t.Fatalf("expected 3 connection attempts (1 + 2 retries), got %d", got)
+			}
+		})
+	}
+}
+
+// targetStatusesFrom reads the query parameters the request sends, so a custom param counts too.
+func TestTargetStatusesFrom(t *testing.T) {
+	cases := []struct {
+		name   string
+		query  url.Values
+		status int
+		want   bool
+	}{
+		{"no params", nil, http.StatusServiceUnavailable, false},
+		{"original_status true", url.Values{originalStatusParam: {"true"}}, http.StatusTooManyRequests, true},
+		{"original_status true, padded", url.Values{originalStatusParam: {" true "}}, http.StatusTooManyRequests, true},
+		{"original_status false", url.Values{originalStatusParam: {"false"}}, http.StatusTooManyRequests, false},
+		{"original_status not a bool", url.Values{originalStatusParam: {"yes please"}}, http.StatusTooManyRequests, false},
+		{"listed", url.Values{allowedStatusCodesParam: {"404,503"}}, http.StatusServiceUnavailable, true},
+		{"listed with spaces", url.Values{allowedStatusCodesParam: {"404, 503"}}, http.StatusServiceUnavailable, true},
+		{"not listed", url.Values{allowedStatusCodesParam: {"404,503"}}, http.StatusBadGateway, false},
+		{"an entry that is not a number", url.Values{allowedStatusCodesParam: {"abc,503"}}, http.StatusServiceUnavailable, true},
+	}
+	for _, tc := range cases {
+		if got := targetStatusesFrom(tc.query).has(tc.status); got != tc.want {
+			t.Fatalf("%s, status %d: got %v, want %v", tc.name, tc.status, got, tc.want)
 		}
 	}
 }

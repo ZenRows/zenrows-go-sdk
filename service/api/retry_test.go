@@ -454,3 +454,86 @@ func TestPreparedDomainCallsAreNotRetried(t *testing.T) {
 		}
 	}
 }
+
+// retriedStatuses are the statuses the client retries on a GET that lets it.
+var retriedStatuses = []int{
+	http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway,
+	http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusUnprocessableEntity,
+}
+
+// getAttempts sends a GET with params to a server that answers status, then 200, and returns the status the call
+// got and the number of attempts.
+func getAttempts(t *testing.T, params *scraperapi.RequestParameters, status int) (int, int) {
+	t.Helper()
+	server, got := newStatusServer(t, "", status, http.StatusOK)
+	res, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	return res.StatusCode(), got.count()
+}
+
+// With original_status set, the API returns the target site's own status, so the client retries no status at all.
+// Each server answers 200 after the first request, so a retry would hide the first answer.
+func TestOriginalStatusIsNeverRetried(t *testing.T) {
+	params := map[string]func() *scraperapi.RequestParameters{
+		"ReturnOriginalStatus": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{ReturnOriginalStatus: true}
+		},
+		"a custom param": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{CustomParams: map[string]string{"original_status": strconv.FormatBool(true)}}
+		},
+	}
+	for name, newParams := range params {
+		for _, status := range retriedStatuses {
+			t.Run(name+"/"+strconv.Itoa(status), func(t *testing.T) {
+				if gotStatus, attempts := getAttempts(t, newParams(), status); gotStatus != status || attempts != 1 {
+					t.Fatalf("expected the %d once with no retry, got status %d after %d attempts", status, gotStatus, attempts)
+				}
+			})
+		}
+	}
+}
+
+// Without original_status, or with it set to false, the same statuses are retried.
+func TestStatusesAreRetriedWithoutOriginalStatus(t *testing.T) {
+	params := map[string]func() *scraperapi.RequestParameters{
+		"no params":                  func() *scraperapi.RequestParameters { return nil },
+		"ReturnOriginalStatus false": func() *scraperapi.RequestParameters { return &scraperapi.RequestParameters{} },
+		"a custom param set to false": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{CustomParams: map[string]string{"original_status": strconv.FormatBool(false)}}
+		},
+	}
+	for name, newParams := range params {
+		for _, status := range retriedStatuses {
+			t.Run(name+"/"+strconv.Itoa(status), func(t *testing.T) {
+				if gotStatus, attempts := getAttempts(t, newParams(), status); gotStatus != http.StatusOK || attempts != 2 {
+					t.Fatalf("expected a retry to succeed after %d, got status %d after %d attempts", status, gotStatus, attempts)
+				}
+			})
+		}
+	}
+}
+
+// A status listed in allowed_status_codes comes from the target site, so the client does not retry it. It still
+// retries a status the list leaves out.
+func TestAllowedStatusCodesAreNotRetried(t *testing.T) {
+	params := map[string]func() *scraperapi.RequestParameters{
+		"AllowedStatusCodes": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{AllowedStatusCodes: []int{http.StatusNotFound, http.StatusServiceUnavailable}}
+		},
+		"a custom param": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{CustomParams: map[string]string{"allowed_status_codes": "404, 503"}}
+		},
+	}
+	for name, newParams := range params {
+		t.Run(name, func(t *testing.T) {
+			if gotStatus, attempts := getAttempts(t, newParams(), http.StatusServiceUnavailable); gotStatus != http.StatusServiceUnavailable || attempts != 1 {
+				t.Fatalf("expected the listed 503 once with no retry, got status %d after %d attempts", gotStatus, attempts)
+			}
+			if gotStatus, attempts := getAttempts(t, newParams(), http.StatusBadGateway); gotStatus != http.StatusOK || attempts != 2 {
+				t.Fatalf("expected a retry to succeed after the unlisted 502, got status %d after %d attempts", gotStatus, attempts)
+			}
+		})
+	}
+}

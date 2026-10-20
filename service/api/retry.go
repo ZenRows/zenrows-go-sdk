@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +23,10 @@ const (
 	maxRetryAfterWait = 30 * time.Second
 	// dialOp is the net.OpError operation of a failed connection attempt.
 	dialOp = "dial"
+	// originalStatusParam and allowedStatusCodesParam are the query parameters of
+	// RequestParameters.ReturnOriginalStatus and RequestParameters.AllowedStatusCodes.
+	originalStatusParam     = "original_status"
+	allowedStatusCodesParam = "allowed_status_codes"
 )
 
 // retryableStatusCodes are the responses worth another try: the API is busy (429), failed (500), or
@@ -44,13 +49,47 @@ type retryCall struct {
 	start time.Time
 	// replayable is false for a request that must be sent at most once (see isReplayable).
 	replayable bool
+	// target tells which statuses come from the target site rather than from the API.
+	target targetStatuses
 	// nextWait is the wait shouldRetry chose for the coming retry, read back by retryAfter.
 	nextWait time.Duration
 }
 
-// withRetryCall returns ctx carrying the retry state of one request. Its retry budget starts now.
-func (c *Client) withRetryCall(ctx context.Context, replayable bool) context.Context {
-	return context.WithValue(ctx, retryCallKey{}, &retryCall{start: c.now(), replayable: replayable})
+// withRetryCall returns ctx carrying the retry state of one request, whose query parameters are query. Its retry
+// budget starts now.
+func (c *Client) withRetryCall(ctx context.Context, replayable bool, query url.Values) context.Context {
+	call := &retryCall{start: c.now(), replayable: replayable, target: targetStatusesFrom(query)}
+	return context.WithValue(ctx, retryCallKey{}, call)
+}
+
+// targetStatuses tells which response statuses come from the target site. The API passes such a status through, so
+// another try would only fetch the same answer from the same site.
+type targetStatuses struct {
+	// all is true when the request sets original_status: the API then returns the target's own status.
+	all bool
+	// allowed is the request's allowed_status_codes: the API returns the target's answer for each of them.
+	allowed []int
+}
+
+// targetStatusesFrom reads original_status and allowed_status_codes from the query parameters of a request. They
+// come from RequestParameters or from its CustomParams, which override them.
+func targetStatusesFrom(query url.Values) targetStatuses {
+	var target targetStatuses
+	// No value, or a value that is not a bool, means the option is off.
+	if all, err := strconv.ParseBool(strings.TrimSpace(query.Get(originalStatusParam))); err == nil {
+		target.all = all
+	}
+	for _, code := range strings.Split(query.Get(allowedStatusCodesParam), ",") {
+		if status, err := strconv.Atoi(strings.TrimSpace(code)); err == nil {
+			target.allowed = append(target.allowed, status)
+		}
+	}
+	return target
+}
+
+// has reports whether status comes from the target site.
+func (t targetStatuses) has(status int) bool {
+	return t.all || slices.Contains(t.allowed, status)
 }
 
 func retryCallFrom(r *resty.Response) (*retryCall, bool) {
@@ -79,10 +118,14 @@ func isReplayable(method string, body any) bool {
 
 // shouldRetry is the client's resty retry condition. It retries a retryable failure of a replayable
 // request only when the wait before the retry still fits in the retry budget, and records that wait
-// for retryAfter.
+// for retryAfter. It never retries a status that comes from the target site (see targetStatuses). A
+// failed connection has no status, so that rule does not stop its retry.
 func (c *Client) shouldRetry(r *resty.Response, err error) bool {
 	call, ok := retryCallFrom(r)
 	if !ok || !call.replayable || !isRetryableFailure(r, err) {
+		return false
+	}
+	if err == nil && call.target.has(r.StatusCode()) {
 		return false
 	}
 	// resty counts attempts from 1, so the first retry follows attempt 1 and uses exponent 0.

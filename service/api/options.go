@@ -116,6 +116,9 @@ func WithAPIKey(apiKey string) Option {
 // Only a GET is retried (Get, Fetch, Extract, or Scrape with GET). The client sends a POST or a PUT once, whatever this
 // count or the request's headers say. The API does not dedupe a request on its Idempotency-Key header, so the client
 // does not retry on it. A caller who needs to retry a POST or a PUT must write that retry itself.
+//
+// The client never retries a status that comes from the target site: any status when the request sets
+// RequestParameters.ReturnOriginalStatus, or a status listed in RequestParameters.AllowedStatusCodes.
 func WithMaxRetryCount(maxRetryCount int) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.maxRetryCount = maxRetryCount

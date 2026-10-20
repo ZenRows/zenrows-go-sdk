@@ -373,6 +373,8 @@ It never retries:
 2. A connection that dropped after the request was sent (a reset or an EOF), or a read timeout. The API may already be
    working on that request, and may charge it.
 3. A canceled or expired context.
+4. Any status when the request sets `ReturnOriginalStatus`, or a status listed in `AllowedStatusCodes`. That status
+   comes from the target site, so another try would get the same answer. A failed connection is still retried.
 
 It retries only requests that are safe to send again:
 
