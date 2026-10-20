@@ -137,12 +137,14 @@ func (c *Client) shouldRetry(r *resty.Response, err error) bool {
 	return true
 }
 
-// retryAfter is the client's resty RetryAfter function: it returns the wait shouldRetry chose.
+// retryAfter is the client's resty RetryAfter function: it returns the wait shouldRetry chose. With
+// no chosen wait, it returns minRetryWait.
 func retryAfter(_ *resty.Client, r *resty.Response) (time.Duration, error) {
-	if call, ok := retryCallFrom(r); ok {
+	if call, ok := retryCallFrom(r); ok && call.nextWait > 0 {
 		return call.nextWait, nil
 	}
-	return 0, nil
+	// Never 0: resty reads 0 as "use your own backoff", which ignores the client's wait rules.
+	return minRetryWait, nil
 }
 
 // isRetryableFailure reports whether an attempt failed in a way another try can fix: a retryable

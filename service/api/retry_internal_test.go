@@ -157,6 +157,36 @@ func newRetryResponse(c *Client, ctx context.Context, attempt, status int, retry
 	return &resty.Response{Request: req, RawResponse: &http.Response{StatusCode: status, Header: header}}
 }
 
+// resty reads a 0 from retryAfter as "use your own backoff", so retryAfter never returns 0.
+func TestRetryAfterNeverReturnsZero(t *testing.T) {
+	c := NewClient(WithAPIKey("k"))
+	withWait := func(wait time.Duration) *resty.Response {
+		ctx := c.withRetryCall(context.Background(), true, nil)
+		resp := newRetryResponse(c, ctx, 1, http.StatusServiceUnavailable, "")
+		call, _ := retryCallFrom(resp)
+		call.nextWait = wait
+		return resp
+	}
+	cases := []struct {
+		name string
+		resp *resty.Response
+		want time.Duration
+	}{
+		{"no response", nil, minRetryWait},
+		{"no per-call state", newRetryResponse(c, context.Background(), 1, http.StatusServiceUnavailable, ""), minRetryWait},
+		{"no chosen wait", withWait(0), minRetryWait},
+		{"chosen wait", withWait(3 * time.Second), 3 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := retryAfter(nil, tc.resp)
+			if err != nil || got != tc.want {
+				t.Fatalf("retryAfter = %v, %v; want %v, nil", got, err, tc.want)
+			}
+		})
+	}
+}
+
 // The retry after attempt n (resty counts from 1) uses exponent n-1, so the first retry waits at most 1s.
 func TestShouldRetryUsesZeroBasedExponent(t *testing.T) {
 	c := NewClient(WithAPIKey("k"), WithMaxRetryCount(5))
