@@ -179,7 +179,7 @@ func TestWithMaxRetryCountRetriesRetryableStatusCodes(t *testing.T) {
 	}
 }
 
-func TestWithoutRetryCountDoesNotRetry(t *testing.T) {
+func TestWithMaxRetryCountZeroDoesNotRetry(t *testing.T) {
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -187,7 +187,7 @@ func TestWithoutRetryCountDoesNotRetry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("k"))
+	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("k"), scraperapi.WithMaxRetryCount(0))
 	res, err := client.Get(context.Background(), "https://example.com", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

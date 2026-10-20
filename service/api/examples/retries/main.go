@@ -13,8 +13,8 @@ const (
 	maxConcurrentRequests = 5                // run 5 scraping requests at the same time
 	totalRequests         = 10               // send a total of 10 scraping requests
 	maxRetryCount         = 5                // retry up to five times
-	retryWait             = 20 * time.Second // waiting at least 20s between retries (just for demonstration purposes!)
-	retryMaxWait          = 25 * time.Second // and waiting a maximum of 25s between retries
+	retryWait             = 2 * time.Second  // the first retry waits up to 2s, the second up to 4s, and so on
+	retryMaxWait          = 10 * time.Second // but no wait is longer than 10s
 )
 
 func main() {
@@ -33,8 +33,8 @@ func main() {
 			defer wg.Done()
 			now := time.Now() // store the time, to be able to print the elapsed duration
 
-			// target the https://httpbin.io/unstable endpoint, as it fails half of the times, so the retry mechanism takes care of
-			// making sure we eventually receive a successful request
+			// target the https://httpbin.io/unstable endpoint, which fails about half of the time. The API reports that failure
+			// with a status the client retries (a 500, or a 422 that is not no_data_extracted), so most requests succeed in the end
 			res, err := client.Get(context.Background(), "https://httpbin.io/unstable", &scraperapi.RequestParameters{})
 			if err != nil {
 				fmt.Println(i, err)

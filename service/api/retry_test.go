@@ -1,0 +1,539 @@
+package scraperapi_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	scraperapi "github.com/zenrows/zenrows-go-sdk/service/api"
+)
+
+// arrivals records when each request reached a test server.
+type arrivals struct {
+	mu    sync.Mutex
+	times []time.Time
+}
+
+func (a *arrivals) add() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.times = append(a.times, time.Now())
+	return len(a.times)
+}
+
+func (a *arrivals) count() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.times)
+}
+
+func (a *arrivals) gaps() []time.Duration {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var gaps []time.Duration
+	for i := 1; i < len(a.times); i++ {
+		gaps = append(gaps, a.times[i].Sub(a.times[i-1]))
+	}
+	return gaps
+}
+
+// newStatusServer answers each request with statuses[n] (the last one repeats), setting
+// Retry-After when retryAfter is not empty.
+func newStatusServer(t *testing.T, retryAfter string, statuses ...int) (*httptest.Server, *arrivals) {
+	t.Helper()
+	got := &arrivals{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := got.add()
+		status := statuses[min(n, len(statuses))-1]
+		if retryAfter != "" && status != http.StatusOK {
+			w.Header().Set("Retry-After", retryAfter)
+		}
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(server.Close)
+	return server, got
+}
+
+func fastRetryClient(baseURL string, opts ...scraperapi.Option) *scraperapi.Client {
+	return scraperapi.NewClient(append([]scraperapi.Option{
+		scraperapi.WithBaseURL(baseURL),
+		scraperapi.WithAPIKey("k"),
+		scraperapi.WithRetryWaitTime(time.Millisecond),
+		scraperapi.WithRetryMaxWaitTime(time.Millisecond),
+	}, opts...)...)
+}
+
+func TestDefaultClientRetriesTwice(t *testing.T) {
+	// Retry-After: 0 keeps each wait at the 250ms floor, so the test stays fast.
+	server, got := newStatusServer(t, "0", http.StatusServiceUnavailable)
+	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("k"))
+
+	res, err := client.Get(context.Background(), "https://example.com", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.StatusCode() != http.StatusServiceUnavailable {
+		t.Fatalf("expected the last 503 to be returned, got %d", res.StatusCode())
+	}
+	if got.count() != 3 {
+		t.Fatalf("expected 3 attempts (1 + 2 default retries), got %d", got.count())
+	}
+}
+
+func TestRetriesEachRetryableStatus(t *testing.T) {
+	// A 422 with no problem code is not Extract's no_data_extracted, so it is retried.
+	for _, status := range []int{
+		http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout,
+		http.StatusInternalServerError, http.StatusUnprocessableEntity,
+	} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			server, got := newStatusServer(t, "", status, http.StatusOK)
+
+			res, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !res.IsSuccess() || got.count() != 2 {
+				t.Fatalf("expected a retry to succeed after %d, got status %d after %d attempts", status, res.StatusCode(), got.count())
+			}
+		})
+	}
+}
+
+func TestDoesNotRetryOtherStatuses(t *testing.T) {
+	for _, status := range []int{
+		http.StatusBadRequest, http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden,
+		http.StatusNotFound, http.StatusNotImplemented,
+	} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			server, got := newStatusServer(t, "", status)
+
+			res, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.StatusCode() != status || got.count() != 1 {
+				t.Fatalf("expected %d once with no retry, got status %d after %d attempts", status, res.StatusCode(), got.count())
+			}
+		})
+	}
+}
+
+func TestRetryWaitIsJitteredWithinBackoffBounds(t *testing.T) {
+	server, got := newStatusServer(t, "", http.StatusServiceUnavailable, http.StatusServiceUnavailable, http.StatusOK)
+	client := scraperapi.NewClient(
+		scraperapi.WithBaseURL(server.URL),
+		scraperapi.WithAPIKey("k"),
+		scraperapi.WithRetryWaitTime(300*time.Millisecond),
+		scraperapi.WithRetryMaxWaitTime(400*time.Millisecond),
+	)
+
+	res, err := client.Get(context.Background(), "https://example.com", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsSuccess() {
+		t.Fatalf("expected the third attempt to succeed, got %d", res.StatusCode())
+	}
+	// Retry 0 waits in [250ms, 300ms], retry 1 in [250ms, min(400ms, 600ms)]. The slack covers the
+	// round trip, which the race detector slows down.
+	const slack = 200 * time.Millisecond
+	uppers := []time.Duration{300 * time.Millisecond, 400 * time.Millisecond}
+	gaps := got.gaps()
+	if len(gaps) != len(uppers) {
+		t.Fatalf("expected %d retries, got %d", len(uppers), len(gaps))
+	}
+	for i, gap := range gaps {
+		if gap < 250*time.Millisecond || gap > uppers[i]+slack {
+			t.Fatalf("retry %d waited %v, want between 250ms and %v", i, gap, uppers[i])
+		}
+	}
+}
+
+func TestRetryAfterIsHonored(t *testing.T) {
+	server, got := newStatusServer(t, "1", http.StatusServiceUnavailable, http.StatusOK)
+
+	res, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsSuccess() {
+		t.Fatalf("expected the retry to succeed, got %d", res.StatusCode())
+	}
+	if gaps := got.gaps(); len(gaps) != 1 || gaps[0] < time.Second {
+		t.Fatalf("expected one retry after at least the 1s Retry-After, got gaps %v", gaps)
+	}
+}
+
+func TestRetryBudgetStopsRetries(t *testing.T) {
+	t.Run("backoff", func(t *testing.T) {
+		// Every jittered wait is at least 250ms, so a 100ms budget fits no retry.
+		server, got := newStatusServer(t, "", http.StatusServiceUnavailable)
+		client := scraperapi.NewClient(
+			scraperapi.WithBaseURL(server.URL),
+			scraperapi.WithAPIKey("k"),
+			scraperapi.WithRetryBudget(100*time.Millisecond),
+		)
+		start := time.Now()
+		res, err := client.Get(context.Background(), "https://example.com", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.StatusCode() != http.StatusServiceUnavailable || got.count() != 1 {
+			t.Fatalf("expected one 503 with no retry, got status %d after %d attempts", res.StatusCode(), got.count())
+		}
+		if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+			t.Fatalf("expected the call to return without waiting, took %v", elapsed)
+		}
+	})
+	t.Run("retry-after", func(t *testing.T) {
+		server, got := newStatusServer(t, "5", http.StatusServiceUnavailable)
+		start := time.Now()
+		res, err := fastRetryClient(server.URL, scraperapi.WithRetryBudget(time.Second)).
+			Get(context.Background(), "https://example.com", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.StatusCode() != http.StatusServiceUnavailable || got.count() != 1 {
+			t.Fatalf("expected one 503 with no retry, got status %d after %d attempts", res.StatusCode(), got.count())
+		}
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Fatalf("expected the call to return without waiting, took %v", elapsed)
+		}
+	})
+}
+
+func TestTimeoutIsNotRetried(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(time.Second):
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := fastRetryClient(server.URL).Get(ctx, "https://example.com", nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a deadline error, got %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("expected 1 attempt with no retry after a timeout, got %d", hits.Load())
+	}
+}
+
+// newDroppingServer reads each request, then closes the connection without an answer: the request
+// was sent, so the API may already be working on it.
+func newDroppingServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = io.ReadAll(r.Body)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, &hits
+}
+
+func TestConnectionDroppedAfterTheRequestIsNotRetried(t *testing.T) {
+	server, hits := newDroppingServer(t)
+	if _, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", nil); err == nil {
+		t.Fatal("expected an error")
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("expected 1 attempt with no retry, got %d", got)
+	}
+}
+
+// formBody is the request body the POST, PUT and body tests send.
+const formBody = "a=1"
+
+func idempotent() *scraperapi.RequestParameters {
+	return &scraperapi.RequestParameters{CustomHeaders: http.Header{"Idempotency-Key": []string{"key-1"}}}
+}
+
+// The API does not dedupe a request on its Idempotency-Key, so the client sends a POST or a PUT once,
+// whatever its headers or body, even for a status it retries on a GET. Each server answers 200 after the
+// first request, so a retry would hide the first answer.
+func TestPostAndPutAreSentOnce(t *testing.T) {
+	headers := map[string]func() *scraperapi.RequestParameters{
+		"no Idempotency-Key": func() *scraperapi.RequestParameters { return nil },
+		"an Idempotency-Key": idempotent,
+	}
+	bodies := map[string]any{
+		"no body":  nil,
+		"a string": formBody,
+		"bytes":    []byte(formBody),
+		"a map":    map[string]string{"a": "1"},
+	}
+	statuses := []int{
+		http.StatusServiceUnavailable, http.StatusTooManyRequests, http.StatusUnprocessableEntity,
+		http.StatusInternalServerError,
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		for headerName, params := range headers {
+			for bodyName, body := range bodies {
+				for _, status := range statuses {
+					t.Run(method+"/"+headerName+"/"+bodyName+"/"+strconv.Itoa(status), func(t *testing.T) {
+						server, got := newStatusServer(t, "", status, http.StatusOK)
+						client := fastRetryClient(server.URL, scraperapi.WithMaxRetryCount(5))
+						res, err := client.Scrape(context.Background(), method, "https://example.com", params(), body)
+						if err != nil {
+							t.Fatalf("unexpected error: %v", err)
+						}
+						if res.StatusCode() != status || got.count() != 1 {
+							t.Fatalf("expected the %d sent once, got status %d after %d attempts", status, res.StatusCode(), got.count())
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// A GET body is retried when the client can send it again (a string or bytes), and never when it is
+// an io.Reader, which the first attempt reads.
+func TestGetBodyGuard(t *testing.T) {
+	cases := map[string]struct {
+		body     any
+		attempts int
+	}{
+		"a string":       {formBody, 2},
+		"bytes":          {[]byte(formBody), 2},
+		"strings.Reader": {strings.NewReader(formBody), 1},
+		"bytes.Reader":   {bytes.NewReader([]byte(formBody)), 1},
+		"bytes.Buffer":   {bytes.NewBufferString(formBody), 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			server, got := newStatusServer(t, "", http.StatusServiceUnavailable, http.StatusOK)
+			res, err := fastRetryClient(server.URL).Scrape(context.Background(), http.MethodGet, "https://example.com", nil, tc.body)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			want := http.StatusOK
+			if tc.attempts == 1 {
+				want = http.StatusServiceUnavailable
+			}
+			if res.StatusCode() != want || got.count() != tc.attempts {
+				t.Fatalf("expected status %d after %d attempts, got status %d after %d", want, tc.attempts, res.StatusCode(), got.count())
+			}
+		})
+	}
+}
+
+func TestInvalidRetryOptionsFailEveryCall(t *testing.T) {
+	cases := map[string]scraperapi.Option{
+		"negative retry count":     scraperapi.WithMaxRetryCount(-1),
+		"zero retry wait time":     scraperapi.WithRetryWaitTime(0),
+		"negative retry wait time": scraperapi.WithRetryWaitTime(-time.Second),
+		"zero retry max wait time": scraperapi.WithRetryMaxWaitTime(0),
+		"zero retry budget":        scraperapi.WithRetryBudget(0),
+		"negative retry budget":    scraperapi.WithRetryBudget(-time.Second),
+	}
+	for name, opt := range cases {
+		t.Run(name, func(t *testing.T) {
+			server, got := newStatusServer(t, "", http.StatusOK)
+			client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("k"), opt)
+			_, err := client.Get(context.Background(), "https://example.com", nil)
+			var invalid scraperapi.InvalidOptionError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("expected an InvalidOptionError, got %v", err)
+			}
+			if got.count() != 0 {
+				t.Fatalf("expected no request, got %d", got.count())
+			}
+		})
+	}
+}
+
+// Canceling the caller's context during the wait before a retry returns at once and sends nothing more.
+func TestCancelDuringTheRetryWaitStopsTheCall(t *testing.T) {
+	server, got := newStatusServer(t, "30", http.StatusServiceUnavailable)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := fastRetryClient(server.URL).Get(ctx, "https://example.com", nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a deadline error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("expected the call to return when the context expired, took %v", elapsed)
+	}
+	if got.count() != 1 {
+		t.Fatalf("expected 1 attempt, got %d", got.count())
+	}
+}
+
+// Extract is retried like Get. A 402 AUTH010 after a retry is a final answer: Extract returns it
+// as is and sends no further request.
+func TestExtractRetriesThenReturnsAuth010AsIs(t *testing.T) {
+	var calls atomic.Int32
+	var mu sync.Mutex
+	var queries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		queries = append(queries, r.URL.RawQuery)
+		mu.Unlock()
+		switch calls.Add(1) {
+		case 1:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case 2:
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = w.Write([]byte(`{"code":"AUTH010","title":"Domain not enabled","status":402}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	res, err := fastRetryClient(server.URL).Extract(context.Background(), "https://example.com", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.StatusCode() != http.StatusPaymentRequired || calls.Load() != 2 {
+		t.Fatalf("expected a 503, then the AUTH010 as is; got status %d after %d calls", res.StatusCode(), calls.Load())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, query := range queries {
+		if !contains(query, "extract=auto") || contains(query, "autoparse") {
+			t.Fatalf("expected every request to be the extract request, got %q", query)
+		}
+	}
+}
+
+// PrepareDomain and PreparedDomainStatus are sent once, even by a client that retries: their 429
+// (no preparations left) and 503 (overloaded or disabled) are answers to read, not failures to retry.
+func TestPreparedDomainCallsAreNotRetried(t *testing.T) {
+	calls := map[string]func(*scraperapi.Client) error{
+		"PrepareDomain": func(c *scraperapi.Client) error {
+			_, err := c.PrepareDomain(context.Background(), "www.example.com", nil)
+			return err
+		},
+		"PreparedDomainStatus": func(c *scraperapi.Client) error {
+			_, err := c.PreparedDomainStatus(context.Background(), "www.example.com")
+			return err
+		},
+	}
+	for name, call := range calls {
+		for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+			t.Run(name+"/"+strconv.Itoa(status), func(t *testing.T) {
+				// The first answer is the error; a retry would get a 200 and hide it.
+				server, got := newStatusServer(t, "0", status, http.StatusOK)
+				// The default client retries a 429 or a 503 twice on every scrape call.
+				client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("k"))
+
+				var perr *scraperapi.PreparedDomainError
+				if err := call(client); !errors.As(err, &perr) || perr.StatusCode != status {
+					t.Fatalf("expected a %d PreparedDomainError, got %v", status, err)
+				}
+				if got.count() != 1 {
+					t.Fatalf("expected 1 request, got %d", got.count())
+				}
+			})
+		}
+	}
+}
+
+// retriedStatuses are the statuses the client retries on a GET that lets it.
+var retriedStatuses = []int{
+	http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway,
+	http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusUnprocessableEntity,
+}
+
+// getAttempts sends a GET with params to a server that answers status, then 200, and returns the status the call
+// got and the number of attempts.
+func getAttempts(t *testing.T, params *scraperapi.RequestParameters, status int) (int, int) {
+	t.Helper()
+	server, got := newStatusServer(t, "", status, http.StatusOK)
+	res, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	return res.StatusCode(), got.count()
+}
+
+// With original_status set, the API returns the target site's own status, so the client retries no status at all.
+// Each server answers 200 after the first request, so a retry would hide the first answer.
+func TestOriginalStatusIsNeverRetried(t *testing.T) {
+	params := map[string]func() *scraperapi.RequestParameters{
+		"ReturnOriginalStatus": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{ReturnOriginalStatus: true}
+		},
+		"a custom param": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{CustomParams: map[string]string{"original_status": strconv.FormatBool(true)}}
+		},
+	}
+	for name, newParams := range params {
+		for _, status := range retriedStatuses {
+			t.Run(name+"/"+strconv.Itoa(status), func(t *testing.T) {
+				if gotStatus, attempts := getAttempts(t, newParams(), status); gotStatus != status || attempts != 1 {
+					t.Fatalf("expected the %d once with no retry, got status %d after %d attempts", status, gotStatus, attempts)
+				}
+			})
+		}
+	}
+}
+
+// Without original_status, or with it set to false, the same statuses are retried.
+func TestStatusesAreRetriedWithoutOriginalStatus(t *testing.T) {
+	params := map[string]func() *scraperapi.RequestParameters{
+		"no params":                  func() *scraperapi.RequestParameters { return nil },
+		"ReturnOriginalStatus false": func() *scraperapi.RequestParameters { return &scraperapi.RequestParameters{} },
+		"a custom param set to false": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{CustomParams: map[string]string{"original_status": strconv.FormatBool(false)}}
+		},
+	}
+	for name, newParams := range params {
+		for _, status := range retriedStatuses {
+			t.Run(name+"/"+strconv.Itoa(status), func(t *testing.T) {
+				if gotStatus, attempts := getAttempts(t, newParams(), status); gotStatus != http.StatusOK || attempts != 2 {
+					t.Fatalf("expected a retry to succeed after %d, got status %d after %d attempts", status, gotStatus, attempts)
+				}
+			})
+		}
+	}
+}
+
+// A status listed in allowed_status_codes comes from the target site, so the client does not retry it. It still
+// retries a status the list leaves out.
+func TestAllowedStatusCodesAreNotRetried(t *testing.T) {
+	params := map[string]func() *scraperapi.RequestParameters{
+		"AllowedStatusCodes": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{AllowedStatusCodes: []int{http.StatusNotFound, http.StatusServiceUnavailable}}
+		},
+		"a custom param": func() *scraperapi.RequestParameters {
+			return &scraperapi.RequestParameters{CustomParams: map[string]string{"allowed_status_codes": "404, 503"}}
+		},
+	}
+	for name, newParams := range params {
+		t.Run(name, func(t *testing.T) {
+			if gotStatus, attempts := getAttempts(t, newParams(), http.StatusServiceUnavailable); gotStatus != http.StatusServiceUnavailable || attempts != 1 {
+				t.Fatalf("expected the listed 503 once with no retry, got status %d after %d attempts", gotStatus, attempts)
+			}
+			if gotStatus, attempts := getAttempts(t, newParams(), http.StatusBadGateway); gotStatus != http.StatusOK || attempts != 2 {
+				t.Fatalf("expected a retry to succeed after the unlisted 502, got status %d after %d attempts", gotStatus, attempts)
+			}
+		})
+	}
+}
