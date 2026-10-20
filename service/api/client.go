@@ -69,6 +69,7 @@ func (c *Client) isConfigured() bool {
 }
 
 // Scrape sends a request to the ZenRows Fetch API to scrape the given target URL using the specified method and parameters.
+// The client retries a GET as WithMaxRetryCount describes. It sends a POST or a PUT once, and never retries it.
 func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *RequestParameters, body any) (*Response, error) {
 	// make sure every option is valid before sending the request
 	if c.optionsErr != nil {
@@ -118,7 +119,7 @@ func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *R
 
 	// execute the request, and return the response or an error if one occurred. The retry budget
 	// starts now, after any wait for a concurrency slot.
-	ctx = c.withRetryCall(ctx, isReplayable(method, req.Header, body))
+	ctx = c.withRetryCall(ctx, isReplayable(method, body))
 	res, err := req.SetContext(ctx).Execute(method, "/")
 	if err != nil {
 		return nil, err
@@ -213,11 +214,13 @@ func withCustomParam(params map[string]string, key, value string) map[string]str
 }
 
 // Post sends an HTTP POST request to the ZenRows Fetch API to scrape the given target URL using the specified parameters.
+// The client sends it once and never retries it, whatever the retry options or headers say.
 func (c *Client) Post(ctx context.Context, targetURL string, params *RequestParameters, body any) (*Response, error) {
 	return c.Scrape(ctx, http.MethodPost, targetURL, params, body)
 }
 
 // Put sends an HTTP PUT request to the ZenRows Fetch API to scrape the given target URL using the specified parameters.
+// The client sends it once and never retries it, whatever the retry options or headers say.
 func (c *Client) Put(ctx context.Context, targetURL string, params *RequestParameters, body any) (*Response, error) {
 	return c.Scrape(ctx, http.MethodPut, targetURL, params, body)
 }

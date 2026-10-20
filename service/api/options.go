@@ -31,10 +31,11 @@ type options struct {
 }
 
 // retryOptions holds the configuration for the retry mechanism of the ZenRows Fetch API client. Only the statuses
-// isRetryableStatus accepts and connection failures before the request was sent are retried; see retry.go.
+// isRetryableStatus accepts and connection failures before the request was sent are retried, and only for a GET
+// (see isReplayable in retry.go). A POST or a PUT is always sent once.
 type retryOptions struct {
-	// maxRetryCount is the maximum number of retries to perform. Defaults to 2; 0 turns retries off. It must not be
-	// negative.
+	// maxRetryCount is the maximum number of retries of a GET. Defaults to 2; 0 turns retries off. It must not be
+	// negative. It does not apply to a POST or a PUT, which the client never retries.
 	maxRetryCount int
 
 	// retryWaitTime is the base of the exponential backoff: retry n waits a random time between 250ms and
@@ -111,6 +112,10 @@ func WithAPIKey(apiKey string) Option {
 
 // WithMaxRetryCount returns an Option which configures the maximum number of retries to perform. Defaults to 2; set 0 to
 // turn retries off. A negative count is invalid: every scrape call then returns an InvalidOptionError.
+//
+// Only a GET is retried (Get, Fetch, Extract, or Scrape with GET). The client sends a POST or a PUT once, whatever this
+// count or the request's headers say. The API does not dedupe a request on its Idempotency-Key header, so the client
+// does not retry on it. A caller who needs to retry a POST or a PUT must write that retry itself.
 func WithMaxRetryCount(maxRetryCount int) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.maxRetryCount = maxRetryCount

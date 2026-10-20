@@ -20,8 +20,6 @@ const (
 	// maxRetryAfterWait bounds the wait a Retry-After can ask for, so a large server value cannot
 	// hang a call. It is fixed: RetryMaxWaitTime does not change it.
 	maxRetryAfterWait = 30 * time.Second
-	// idempotencyKeyHeader marks a POST or PUT that the caller allows the client to send again.
-	idempotencyKeyHeader = "Idempotency-Key"
 	// dialOp is the net.OpError operation of a failed connection attempt.
 	dialOp = "dial"
 )
@@ -63,16 +61,16 @@ func retryCallFrom(r *resty.Response) (*retryCall, bool) {
 	return call, ok
 }
 
-// isReplayable reports whether a request may be sent more than once. GET, HEAD and OPTIONS always
-// may. Any other method needs an Idempotency-Key header and a body the client can send again: no
-// body, a string, a []byte, or a value encoded per attempt (a struct or a map). An io.Reader is read
-// by the first attempt, so a retry would send an empty body: it is never retried.
-func isReplayable(method string, header http.Header, body any) bool {
+// isReplayable reports whether a request may be sent more than once. Only GET, HEAD and OPTIONS may.
+// Every other method, POST and PUT included, is sent once: the API does not dedupe a request on its
+// Idempotency-Key header, so a retry could run, and charge, the same request twice. The body must also
+// be one the client can send again: none, a string, a []byte, or a struct or map that it encodes
+// before sending. An io.Reader is read by the first attempt, so a retry would send an empty body: a
+// request with one is never retried, whatever its method.
+func isReplayable(method string, body any) bool {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return true
-	}
-	if header.Get(idempotencyKeyHeader) == "" {
+	default:
 		return false
 	}
 	_, oneShot := body.(io.Reader)

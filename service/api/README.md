@@ -260,7 +260,7 @@ You can customize the client using different options:
 
 - `WithAPIKey(apiKey string)`: Sets the API key for authentication. If not provided, the SDK will look for
 the `ZENROWS_API_KEY` environment variable.
-- `WithMaxRetryCount(maxRetryCount int)`: Sets the maximum number of retries for failed requests. _Default is 2; set 0 to turn retries off._
+- `WithMaxRetryCount(maxRetryCount int)`: Sets the maximum number of retries for a failed `GET` request. `POST` and `PUT` requests are never retried (see [Retrying](#retrying)). _Default is 2; set 0 to turn retries off._
 - `WithRetryWaitTime(retryWaitTime time.Duration)`: Sets the base of the exponential backoff between retries. Must be greater than zero. _Default is 1 second._
 - `WithRetryMaxWaitTime(retryMaxWaitTime time.Duration)`: Sets the maximum backoff wait before a retry. It does not limit a `Retry-After` wait. Must be greater than zero. _Default is 30 seconds._
 - `WithRetryBudget(retryBudget time.Duration)`: No retry starts after this time, counted from the first attempt. Must be greater than zero. _Default is 90 seconds._
@@ -358,7 +358,7 @@ done
 
 #### Retrying
 
-By default, the client retries a failed scrape request up to 2 times. `WithMaxRetryCount(0)` turns retries off.
+By default, the client retries a failed `GET` scrape request up to 2 times. `WithMaxRetryCount(0)` turns retries off.
 
 The client retries these failures:
 
@@ -376,11 +376,14 @@ It never retries:
 
 It retries only requests that are safe to send again:
 
-1. A `GET` request, always.
-2. A `POST` or `PUT` request only when it carries an `Idempotency-Key` header (set it in `RequestParameters.CustomHeaders`)
-   and a body the client can send again: no body, a `string`, a `[]byte`, or a struct or map that it encodes on each
-   attempt. A body passed as an `io.Reader` is read by the first attempt, so that request is never retried.
-3. Every other `POST` or `PUT` request is sent once.
+1. A `GET` request (`Get()`, `Fetch()`, `Extract()`, or `Scrape()` with `GET`). Its body must be none, a `string`, a
+   `[]byte`, or a struct or map that the client encodes before sending. A body passed as an `io.Reader` is read by the
+   first attempt, so a request with one is never retried.
+2. A `POST` or `PUT` request is never retried. The client sends it once, whatever its headers, its body, the status, or
+   the failure, even when it fails to connect.
+
+The API does not dedupe a request on its `Idempotency-Key` header, so the client does not retry on it. If you need to
+retry a `POST` or `PUT`, write that retry yourself.
 
 Before each retry, the client waits:
 

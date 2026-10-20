@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -254,113 +253,87 @@ func newDroppingServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
 }
 
 func TestConnectionDroppedAfterTheRequestIsNotRetried(t *testing.T) {
-	t.Run("GET", func(t *testing.T) {
-		server, hits := newDroppingServer(t)
-		if _, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", nil); err == nil {
-			t.Fatal("expected an error")
-		}
-		if got := hits.Load(); got != 1 {
-			t.Fatalf("expected 1 attempt with no retry, got %d", got)
-		}
-	})
-	t.Run("POST with an Idempotency-Key", func(t *testing.T) {
-		server, hits := newDroppingServer(t)
-		if _, err := fastRetryClient(server.URL).Post(context.Background(), "https://example.com", idempotent(), formBody); err == nil {
-			t.Fatal("expected an error")
-		}
-		if got := hits.Load(); got != 1 {
-			t.Fatalf("expected 1 attempt with no retry, got %d", got)
-		}
-	})
+	server, hits := newDroppingServer(t)
+	if _, err := fastRetryClient(server.URL).Get(context.Background(), "https://example.com", nil); err == nil {
+		t.Fatal("expected an error")
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("expected 1 attempt with no retry, got %d", got)
+	}
 }
 
-// formBody is the request body the POST and PUT tests send.
+// formBody is the request body the POST, PUT and body tests send.
 const formBody = "a=1"
 
 func idempotent() *scraperapi.RequestParameters {
 	return &scraperapi.RequestParameters{CustomHeaders: http.Header{"Idempotency-Key": []string{"key-1"}}}
 }
 
-// newBodyServer answers 503 to the first request and 200 after, and records each request body.
-func newBodyServer(t *testing.T) (*httptest.Server, func() []string) {
-	t.Helper()
-	var mu sync.Mutex
-	var bodies []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		bodies = append(bodies, string(body))
-		n := len(bodies)
-		mu.Unlock()
-		if n == 1 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(server.Close)
-	return server, func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		return slices.Clone(bodies)
+// The API does not dedupe a request on its Idempotency-Key, so the client sends a POST or a PUT once,
+// whatever its headers or body, even for a status it retries on a GET. Each server answers 200 after the
+// first request, so a retry would hide the first answer.
+func TestPostAndPutAreSentOnce(t *testing.T) {
+	headers := map[string]func() *scraperapi.RequestParameters{
+		"no Idempotency-Key": func() *scraperapi.RequestParameters { return nil },
+		"an Idempotency-Key": idempotent,
 	}
-}
-
-func TestPostAndPutAreNotRetriedWithoutAnIdempotencyKey(t *testing.T) {
+	bodies := map[string]any{
+		"no body":  nil,
+		"a string": formBody,
+		"bytes":    []byte(formBody),
+		"a map":    map[string]string{"a": "1"},
+	}
+	statuses := []int{
+		http.StatusServiceUnavailable, http.StatusTooManyRequests, http.StatusUnprocessableEntity,
+		http.StatusInternalServerError,
+	}
 	for _, method := range []string{http.MethodPost, http.MethodPut} {
-		t.Run(method, func(t *testing.T) {
-			server, bodies := newBodyServer(t)
-			res, err := fastRetryClient(server.URL).Scrape(context.Background(), method, "https://example.com", nil, formBody)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+		for headerName, params := range headers {
+			for bodyName, body := range bodies {
+				for _, status := range statuses {
+					t.Run(method+"/"+headerName+"/"+bodyName+"/"+strconv.Itoa(status), func(t *testing.T) {
+						server, got := newStatusServer(t, "", status, http.StatusOK)
+						client := fastRetryClient(server.URL, scraperapi.WithMaxRetryCount(5))
+						res, err := client.Scrape(context.Background(), method, "https://example.com", params(), body)
+						if err != nil {
+							t.Fatalf("unexpected error: %v", err)
+						}
+						if res.StatusCode() != status || got.count() != 1 {
+							t.Fatalf("expected the %d sent once, got status %d after %d attempts", status, res.StatusCode(), got.count())
+						}
+					})
+				}
 			}
-			if res.StatusCode() != http.StatusServiceUnavailable || len(bodies()) != 1 {
-				t.Fatalf("expected the 503 sent once, got status %d after %d attempts", res.StatusCode(), len(bodies()))
-			}
-		})
+		}
 	}
 }
 
-func TestPostWithAnIdempotencyKeyRetriesAReplayableBody(t *testing.T) {
+// A GET body is retried when the client can send it again (a string or bytes), and never when it is
+// an io.Reader, which the first attempt reads.
+func TestGetBodyGuard(t *testing.T) {
 	cases := map[string]struct {
-		body any
-		want string
+		body     any
+		attempts int
 	}{
-		"string": {formBody, formBody},
-		"bytes":  {[]byte(formBody), formBody},
-		"map":    {map[string]string{"a": "1"}, `{"a":"1"}`},
+		"a string":       {formBody, 2},
+		"bytes":          {[]byte(formBody), 2},
+		"strings.Reader": {strings.NewReader(formBody), 1},
+		"bytes.Reader":   {bytes.NewReader([]byte(formBody)), 1},
+		"bytes.Buffer":   {bytes.NewBufferString(formBody), 1},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			server, bodies := newBodyServer(t)
-			res, err := fastRetryClient(server.URL).Post(context.Background(), "https://example.com", idempotent(), tc.body)
+			server, got := newStatusServer(t, "", http.StatusServiceUnavailable, http.StatusOK)
+			res, err := fastRetryClient(server.URL).Scrape(context.Background(), http.MethodGet, "https://example.com", nil, tc.body)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if !res.IsSuccess() {
-				t.Fatalf("expected the retry to succeed, got %d", res.StatusCode())
+			want := http.StatusOK
+			if tc.attempts == 1 {
+				want = http.StatusServiceUnavailable
 			}
-			if got := bodies(); !slices.Equal(got, []string{tc.want, tc.want}) {
-				t.Fatalf("expected the same body twice, got %q", got)
-			}
-		})
-	}
-}
-
-// A one-shot io.Reader is read by the first attempt, so a retry would send an empty body.
-func TestPostWithAnIoReaderBodyIsNotRetried(t *testing.T) {
-	for name, body := range map[string]io.Reader{
-		"strings.Reader": strings.NewReader(formBody),
-		"bytes.Buffer":   bytes.NewBufferString(formBody),
-	} {
-		t.Run(name, func(t *testing.T) {
-			server, bodies := newBodyServer(t)
-			res, err := fastRetryClient(server.URL).Post(context.Background(), "https://example.com", idempotent(), body)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got := bodies(); res.StatusCode() != http.StatusServiceUnavailable || !slices.Equal(got, []string{formBody}) {
-				t.Fatalf("expected the 503 sent once with its body, got status %d and bodies %q", res.StatusCode(), got)
+			if res.StatusCode() != want || got.count() != tc.attempts {
+				t.Fatalf("expected status %d after %d attempts, got status %d after %d", want, tc.attempts, res.StatusCode(), got.count())
 			}
 		})
 	}

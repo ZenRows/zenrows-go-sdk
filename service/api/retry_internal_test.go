@@ -346,33 +346,75 @@ func TestIsRetryableFailureAfterAResponse(t *testing.T) {
 	}
 }
 
+// Conformance vectors: only GET, HEAD and OPTIONS are retried, and never with an io.Reader body. Every
+// other method is sent once, with or without an Idempotency-Key, whatever its body.
 func TestIsReplayable(t *testing.T) {
-	withKey := http.Header{}
-	withKey.Set("idempotency-key", "k1")
 	cases := []struct {
 		name   string
 		method string
-		header http.Header
 		body   any
 		want   bool
 	}{
-		{"GET", http.MethodGet, http.Header{}, nil, true},
-		{"HEAD", http.MethodHead, http.Header{}, nil, true},
-		{"OPTIONS", http.MethodOptions, http.Header{}, nil, true},
-		{"POST without a key", http.MethodPost, http.Header{}, "a=1", false},
-		{"PUT without a key", http.MethodPut, http.Header{}, []byte("a=1"), false},
-		{"POST with a key and no body", http.MethodPost, withKey, nil, true},
-		{"POST with a key and a string", http.MethodPost, withKey, "a=1", true},
-		{"POST with a key and bytes", http.MethodPost, withKey, []byte("a=1"), true},
-		{"POST with a key and a map", http.MethodPost, withKey, map[string]string{"a": "1"}, true},
-		{"PUT with a key and a struct", http.MethodPut, withKey, struct{ A string }{"1"}, true},
-		{"POST with a key and a strings.Reader", http.MethodPost, withKey, strings.NewReader("a=1"), false},
-		{"POST with a key and a bytes.Reader", http.MethodPost, withKey, bytes.NewReader([]byte("a=1")), false},
-		{"POST with a key and a bytes.Buffer", http.MethodPost, withKey, bytes.NewBufferString("a=1"), false},
+		{"GET", http.MethodGet, nil, true},
+		{"HEAD", http.MethodHead, nil, true},
+		{"OPTIONS", http.MethodOptions, nil, true},
+		{"GET with a string", http.MethodGet, "a=1", true},
+		{"GET with bytes", http.MethodGet, []byte("a=1"), true},
+		{"GET with a map", http.MethodGet, map[string]string{"a": "1"}, true},
+		{"GET with a strings.Reader", http.MethodGet, strings.NewReader("a=1"), false},
+		{"GET with a bytes.Reader", http.MethodGet, bytes.NewReader([]byte("a=1")), false},
+		{"GET with a bytes.Buffer", http.MethodGet, bytes.NewBufferString("a=1"), false},
+		{"HEAD with a strings.Reader", http.MethodHead, strings.NewReader("a=1"), false},
+		{"OPTIONS with a strings.Reader", http.MethodOptions, strings.NewReader("a=1"), false},
+		{"POST with no body", http.MethodPost, nil, false},
+		{"POST with a string", http.MethodPost, "a=1", false},
+		{"POST with bytes", http.MethodPost, []byte("a=1"), false},
+		{"POST with a map", http.MethodPost, map[string]string{"a": "1"}, false},
+		{"PUT with no body", http.MethodPut, nil, false},
+		{"PUT with a struct", http.MethodPut, struct{ A string }{"1"}, false},
+		{"PATCH with no body", http.MethodPatch, nil, false},
+		{"DELETE with no body", http.MethodDelete, nil, false},
 	}
 	for _, tc := range cases {
-		if got := isReplayable(tc.method, tc.header, tc.body); got != tc.want {
+		if got := isReplayable(tc.method, tc.body); got != tc.want {
 			t.Fatalf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A POST or a PUT that fails to connect is not retried either, with or without an Idempotency-Key,
+// while a GET that fails the same way is (see TestConnectFailuresAreRetried).
+func TestPostAndPutAreSentOnceOnARefusedConnection(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedAddr := listener.Addr().String()
+	_ = listener.Close()
+
+	headers := map[string]http.Header{
+		"no Idempotency-Key": nil,
+		"an Idempotency-Key": {"Idempotency-Key": []string{"key-1"}},
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		for name, header := range headers {
+			t.Run(method+"/"+name, func(t *testing.T) {
+				c := NewClient(WithBaseURL("http://"+closedAddr), WithAPIKey("k"), WithMaxRetryCount(5))
+				c.randN = randAtZero
+				var dials atomic.Int32
+				c.http.SetTransport(&http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+					dials.Add(1)
+					return (&net.Dialer{}).DialContext(ctx, network, closedAddr)
+				}})
+
+				params := &RequestParameters{CustomHeaders: header}
+				if _, err := c.Scrape(context.Background(), method, "https://example.com", params, "a=1"); err == nil {
+					t.Fatal("expected an error")
+				}
+				if got := dials.Load(); got != 1 {
+					t.Fatalf("expected 1 connection attempt with no retry, got %d", got)
+				}
+			})
 		}
 	}
 }
