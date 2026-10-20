@@ -70,11 +70,33 @@ func TestEstimateCostTaskParamsOverrideJobParamsOnCollision(t *testing.T) {
 	}
 }
 
-func TestEstimateCostTruthyStringSpellings(t *testing.T) {
-	for _, v := range []string{"true", "1", "yes", "on", "TRUE", " On "} {
-		est := batch.EstimateCost([]batch.Task{{URL: "https://a", ZenRowsParams: map[string]any{"js_render": v}}}, nil)
-		if est.Min != batch.JSCredits {
-			t.Fatalf("expected js_render=%q to be truthy, got %+v", v, est)
+func TestEstimateCostTruthyMatchesTheAPI(t *testing.T) {
+	// The API accepts a JSON true/false or "true"/"false" in any case for a boolean param, and
+	// only true and "true" turn it on. Anything else is a 400 from the API, so it must not
+	// price as on.
+	cases := []struct {
+		value any
+		want  int
+	}{
+		{true, batch.JSCredits},
+		{"true", batch.JSCredits},
+		{"TRUE", batch.JSCredits},
+		{"True", batch.JSCredits},
+		{false, batch.BaseCredits},
+		{"false", batch.BaseCredits},
+		{"FALSE", batch.BaseCredits},
+		{"False", batch.BaseCredits},
+		{1, batch.BaseCredits},
+		{1.0, batch.BaseCredits},
+		{"1", batch.BaseCredits},
+		{"yes", batch.BaseCredits},
+		{"on", batch.BaseCredits},
+		{" true ", batch.BaseCredits},
+	}
+	for _, tc := range cases {
+		est := batch.EstimateCost([]batch.Task{{URL: "https://a", ZenRowsParams: map[string]any{"js_render": tc.value}}}, nil)
+		if est.Min != tc.want {
+			t.Fatalf("js_render=%#v: got %d credits, want %d", tc.value, est.Min, tc.want)
 		}
 	}
 }

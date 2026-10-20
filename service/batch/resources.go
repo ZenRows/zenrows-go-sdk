@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"iter"
 )
 
@@ -72,12 +73,14 @@ func (r JobRef) Delete(ctx context.Context) error {
 // Rerun starts a new run. Without opts.Status: full rerun of the previous run's tasks (or,
 // for a scheduled job with no prior run, a manual fire from the template). With opts.Status
 // (e.g. "failed" or "failed,pending"): partial retry. Returns a RunHandle for the new run.
+// The new run's task rows are written in the background; set opts.WaitForIngest to return
+// once they are (see Client.Rerun).
 func (r JobRef) Rerun(ctx context.Context, opts RerunOptions) (RunHandle, error) {
-	resp, err := r.client.postRerun(ctx, r.jobID, opts)
-	if err != nil {
+	resp, err := r.client.rerunAndWait(ctx, r.jobID, opts)
+	if resp.LatestRun.RunID == "" {
 		return RunHandle{}, err
 	}
-	return RunHandle{RunRef: RunRef{client: r.client, jobID: r.jobID, runID: resp.LatestRun.RunID}, Data: resp.LatestRun}, nil
+	return RunHandle{RunRef: RunRef{client: r.client, jobID: r.jobID, runID: resp.LatestRun.RunID}, Data: resp.LatestRun}, err
 }
 
 // RetryFailedOptions configures JobRef.RetryFailed.
@@ -86,6 +89,8 @@ type RetryFailedOptions struct {
 	// move after Run().Stop() left orphan pending rows.
 	IncludePending bool
 	IdempotencyKey string
+	// WaitForIngest returns only once the new run's task rows are written (see Client.Rerun).
+	WaitForIngest bool
 }
 
 // RetryFailed starts a new run that re-executes only the previous run's failed tasks
@@ -97,12 +102,19 @@ func (r JobRef) RetryFailed(ctx context.Context, opts RetryFailedOptions) (RunHa
 	if opts.IncludePending {
 		status = "failed,pending"
 	}
-	return r.Rerun(ctx, RerunOptions{Status: status, IdempotencyKey: opts.IdempotencyKey})
+	return r.Rerun(ctx, RerunOptions{Status: status, IdempotencyKey: opts.IdempotencyKey, WaitForIngest: opts.WaitForIngest})
 }
 
 // AddTasks appends to the open initial run.
 func (r JobRef) AddTasks(ctx context.Context, tasks []Task, lastBatch bool) (*AddTasksResponse, error) {
-	return r.client.postTasks(ctx, r.jobID, tasks, lastBatch)
+	return r.client.postTasks(ctx, r.jobID, tasks, AddTasksOptions{LastBatch: lastBatch})
+}
+
+// AddTasksWithOptions appends to the open initial run, with an optional Idempotency-Key so a
+// retried call doesn't append the same tasks twice (see AddTasksOptions.IdempotencyKey for when
+// a retry replays and when it conflicts).
+func (r JobRef) AddTasksWithOptions(ctx context.Context, tasks []Task, opts AddTasksOptions) (*AddTasksResponse, error) {
+	return r.client.postTasks(ctx, r.jobID, tasks, opts)
 }
 
 // Runs auto-paginates runs of this job, yielding (RunHandle, error) pairs. To address a
@@ -135,10 +147,10 @@ func (r JobRef) GetWebhook(ctx context.Context) (*WebhookConfig, error) {
 	return r.client.GetJobWebhook(ctx, r.jobID)
 }
 
-// SetWebhook replaces this job's webhook config. Both fields are required (no defaulting, so
-// you can't silently toggle signing).
+// SetWebhook replaces this job's webhook config. Both arguments are required, so a change of
+// URL can't silently turn signing off. See Client.SetJobWebhook.
 func (r JobRef) SetWebhook(ctx context.Context, url string, signature bool) (*WebhookConfig, error) {
-	return r.client.PutJobWebhook(ctx, r.jobID, WebhookConfig{URL: url, Signature: signature})
+	return r.client.SetJobWebhook(ctx, r.jobID, url, signature)
 }
 
 // DeleteWebhook clears this job's webhook config. Idempotent.
@@ -233,10 +245,11 @@ func (r RunRef) DownloadTaskToMemory(task TaskResult) ([]byte, error) {
 func (r RunRef) Wait(ctx context.Context, opts WaitForRunOptions) (RunHandle, error) {
 	opts.RunID = r.runID
 	run, err := r.client.WaitForRun(ctx, r.jobID, opts)
-	if err != nil {
+	var paused RunPausedError
+	if err != nil && !errors.As(err, &paused) {
 		return RunHandle{}, err
 	}
-	return RunHandle{RunRef: r, Data: run}, nil
+	return RunHandle{RunRef: r, Data: run}, err
 }
 
 // StartExport kicks off an async zip of this run's bodies. Returns an ExportRef carrying the
@@ -264,17 +277,17 @@ type RunHandle struct {
 }
 
 // Status is this run's status. Shortcut for Data.Status.
-func (h RunHandle) Status() RunStatus { return h.Data.Status }
+func (h RunHandle) Status() RunStatus { return h.Data.Status } //nolint:gocritic // value receiver kept so existing callers keep compiling
 
 // Stats is this run's task rollup. Shortcut for Data.Stats.
-func (h RunHandle) Stats() RunStats { return h.Data.Stats }
+func (h RunHandle) Stats() RunStats { return h.Data.Stats } //nolint:gocritic // value receiver kept so existing callers keep compiling
 
 // ======================= ExportRef / ExportHandle =======================
 
 // ExportRef is a reference to a results export by id. A results export is async:
 // StartResultsExport returns immediately with a pending ref; the server zips the run in the
 // background and it reaches completed (download URL ready) or failed (with an error message
-// — e.g. the 1 GiB size cap). Call Load / Wait for an ExportHandle with data.
+// (e.g. the run is over the export size cap). Call Load / Wait for an ExportHandle with data.
 type ExportRef struct {
 	client   *Client
 	jobID    string
@@ -401,10 +414,11 @@ func (cr CurrentRun) Cancel(ctx context.Context) (RunHandle, error) { return cr.
 func (cr CurrentRun) Wait(ctx context.Context, opts WaitForRunOptions) (RunHandle, error) {
 	opts.RunID = ""
 	run, err := cr.client.WaitForRun(ctx, cr.jobID, opts)
-	if err != nil {
+	var paused RunPausedError
+	if err != nil && !errors.As(err, &paused) {
 		return RunHandle{}, err
 	}
-	return RunHandle{RunRef: RunRef{client: cr.client, jobID: cr.jobID, runID: run.RunID}, Data: run}, nil
+	return RunHandle{RunRef: RunRef{client: cr.client, jobID: cr.jobID, runID: run.RunID}, Data: run}, err
 }
 
 // Results auto-paginates task results from the current run.

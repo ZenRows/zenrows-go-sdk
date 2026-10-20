@@ -116,7 +116,9 @@ type SubmitScheduledOptions struct {
 
 // SubmitScheduled submits a scheduled job. opts.Schedule is one of the typed builders (At,
 // Rate, Calendar — see NewAt/NewRate/NewCalendar), which validate their inputs the same way
-// the server does. Tasks and FileInputID are mutually exclusive, same as SubmitRegular.
+// the server does. Tasks and FileInputID are mutually exclusive, same as SubmitRegular. The
+// submit creates no run, so the returned job has no latest run and there is nothing to wait
+// for: the first fire creates run 1. Use JobRef.Run().Wait after a fire.
 func (c *Client) SubmitScheduled(ctx context.Context, opts SubmitScheduledOptions) (JobRef, error) {
 	if opts.Schedule == nil {
 		return JobRef{}, fmt.Errorf("SubmitScheduled: Schedule is required")
