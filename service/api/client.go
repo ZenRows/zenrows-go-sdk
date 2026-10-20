@@ -143,17 +143,24 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 // ExtractModeAuto. This is a thin wrapper over Get with the Extract param set — no separate
 // endpoint or auth.
 //
-// Extract works on any domain ZenRows has prepared, with any active API key. On a domain
-// that isn't prepared yet, ExtractModeAuto returns a 403 with problem code REQS007, and
-// Extract returns it as is: prepare the domain with POST /v1/extract/prepared-domains, or
-// set params.AutoParse yourself. On the legacy domain-not-enabled error (a 402 with problem
-// code AUTH010), Extract retries once with AutoParse set by default — set
-// params.DisableAutoparseFallback to get the raw AUTH010 response back instead.
+// Extract works on any prepared domain (you can prepare one yourself with
+// POST /v1/extract/prepared-domains), with any active API key. A 403 with problem code
+// REQS007 means Extract can't extract this page. Check Reason in the problem body
+// (Response.Problem().Reason) when present; older responses may not carry it:
 //
-// Extract also sends Adaptive Stealth Mode (wire param "mode=auto") by default on both the
-// extract attempt and the AutoParse fallback, so a target needing JSRender/
-// UsePremiumProxies (e.g. a site with heavy anti-bot defenses) escalates automatically
-// instead of failing with REQS002. It is skipped when params sets JSRender or
+//   - "domain_not_prepared": prepare the domain with Client.PrepareDomain, poll
+//     Client.PreparedDomainStatus until Status is "ready", then retry.
+//   - "page_not_recognised": the domain is served, but this page isn't one Extract extracts
+//     (a home, search, login or category page). Try a product, article or listing page, or
+//     retry once in a few minutes. Preparing the domain again changes nothing.
+//   - "domain_not_enabled": preparing doesn't help. Use CSSExtractor, or contact support.
+//
+// The legacy domain-not-enabled error is a 402 with problem code AUTH010. Extract returns
+// both responses to you as is, in one request; it never retries them with AutoParse.
+//
+// Extract also sends Adaptive Stealth Mode (wire param "mode=auto") by default, so a target
+// needing JSRender/UsePremiumProxies (e.g. a site with heavy anti-bot defenses) escalates
+// automatically instead of failing with REQS002. It is skipped when params sets JSRender or
 // UsePremiumProxies (the API rejects either combined with Adaptive Stealth Mode) or its own
 // Mode. Set params.DisableAdaptiveStealth to turn it off entirely.
 //
@@ -176,22 +183,7 @@ func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestP
 		extractParams.CustomParams = withCustomParam(extractParams.CustomParams, "mode", "auto")
 	}
 
-	response, err := c.Get(ctx, targetURL, &extractParams)
-	if err != nil {
-		return response, err
-	}
-
-	if response.StatusCode() == http.StatusPaymentRequired &&
-		extractParams.Extract == ExtractModeAuto &&
-		!extractParams.DisableAutoparseFallback &&
-		isAuth010(response) {
-		autoparseParams := extractParams
-		autoparseParams.Extract = ""
-		autoparseParams.AutoParse = true
-		return c.Get(ctx, targetURL, &autoparseParams)
-	}
-
-	return response, nil
+	return c.Get(ctx, targetURL, &extractParams)
 }
 
 // addsAdaptiveStealth reports whether Extract should add the wire param "mode=auto". It
@@ -222,13 +214,6 @@ func withCustomParam(params map[string]string, key, value string) map[string]str
 	}
 	merged[key] = value
 	return merged
-}
-
-// isAuth010 reports whether a response's problem envelope carries the Extract
-// domain-not-enabled code (AUTH010).
-func isAuth010(response *Response) bool {
-	prob := response.Problem()
-	return prob != nil && strings.EqualFold(prob.Code, "AUTH010")
 }
 
 // Post sends an HTTP POST request to the ZenRows Fetch API to scrape the given target URL using the specified parameters.
