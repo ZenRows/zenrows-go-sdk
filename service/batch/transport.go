@@ -2,7 +2,6 @@ package batch
 
 import (
 	"context"
-	"errors"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -18,6 +17,10 @@ const (
 	backoffCapMs  = 10_000
 	backoffJitter = 0.2
 )
+
+// maxRetryAfter caps how long one retry waits on a server's Retry-After, so a large value
+// can't stall a call for minutes. Same cap as the Python and Node SDKs.
+const maxRetryAfter = 30 * time.Second
 
 var retryableStatuses = map[int]bool{
 	http.StatusTooManyRequests:    true,
@@ -58,14 +61,31 @@ func retryAfterDuration(res *resty.Response) (time.Duration, bool) {
 	if err != nil || secs < 0 {
 		return 0, false
 	}
+	if secs >= maxRetryAfter.Seconds() {
+		return maxRetryAfter, true
+	}
 	return time.Duration(secs * float64(time.Second)), true
+}
+
+// isPermanentRateLimit reports a 429 that retrying can't fix: quota_exceeded means an account
+// limit (active jobs, scheduled jobs, an open job's task cap), which clears only when a job
+// finishes or is deleted.
+func isPermanentRateLimit(res *resty.Response) bool {
+	if res.StatusCode() != http.StatusTooManyRequests {
+		return false
+	}
+	p := parseProblem(res.Body())
+	return p != nil && p.Code == CodeQuotaExceeded
 }
 
 // executeWithRetry sends req via method+path, retrying transient failures (429/502/503/504,
 // or a network error) up to maxRetries times with jittered exponential backoff (honoring
-// Retry-After when present). Only idempotent requests are replayed: GET/PUT/DELETE/HEAD/
-// OPTIONS, plus POST when the caller supplied an Idempotency-Key header. Context
-// cancellation/timeout is never retried — the caller set that budget.
+// Retry-After when present, capped at maxRetryAfter). A 429 quota_exceeded is returned at
+// once: it is an account limit, not a transient one. Only idempotent requests are replayed: GET/PUT/DELETE/HEAD/
+// OPTIONS, plus POST when the caller supplied an Idempotency-Key header. A request that runs
+// out of the client's per-request timeout (WithTimeout) is a network error and is retried
+// like one; cancellation or expiry of the caller's ctx is never retried, since the caller set
+// that budget.
 func executeWithRetry(ctx context.Context, req *resty.Request, method, path string, maxRetries int) (*resty.Response, error) {
 	idempotent := idempotentMethods[method] || (method == http.MethodPost && hasIdempotencyKey(req))
 
@@ -73,7 +93,7 @@ func executeWithRetry(ctx context.Context, req *resty.Request, method, path stri
 	for {
 		res, err := req.Execute(method, path)
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			if ctx.Err() != nil {
 				return res, err
 			}
 			if idempotent && attempt < maxRetries {
@@ -86,7 +106,7 @@ func executeWithRetry(ctx context.Context, req *resty.Request, method, path stri
 			return res, err
 		}
 
-		if idempotent && attempt < maxRetries && retryableStatuses[res.StatusCode()] {
+		if idempotent && attempt < maxRetries && retryableStatuses[res.StatusCode()] && !isPermanentRateLimit(res) {
 			wait, ok := retryAfterDuration(res)
 			if !ok {
 				wait = backoffDuration(attempt)

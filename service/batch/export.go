@@ -25,8 +25,8 @@ func (c *Client) postExportStart(ctx context.Context, jobID, runID string) (Star
 
 // StartResultsExport kicks off an async zip of every task body in the run. Returns an
 // ExportRef carrying the just-issued export id; failure modes: 404 if the job/run is missing
-// or not yours. The worker fails the export (status=failed, error="results are larger then 1
-// gb") if the pre-zip total exceeds the server's 1 GiB cap.
+// or not yours. The server fails the export (status=failed, error="results are larger than N
+// gb") if the run's total body size exceeds its export size cap.
 func (c *Client) StartResultsExport(ctx context.Context, jobID, runID string) (ExportRef, error) {
 	resp, err := c.postExportStart(ctx, jobID, runID)
 	if err != nil {
@@ -69,7 +69,8 @@ type WaitForExportOptions struct {
 // WaitForExport blocks until an export reaches a terminal state (defaults to
 // {completed, failed}). Returns the Export snapshot — callers check .Status and (on
 // completed) .DownloadURL. "failed" is NOT treated as an error here; the caller decides
-// whether e.g. Error == "results are larger then 1 gb" is fatal or expected.
+// whether a failure (for example, Error saying the run's results are larger than the export
+// size cap) is fatal or expected.
 func (c *Client) WaitForExport(ctx context.Context, jobID, runID, exportID string, opts WaitForExportOptions) (Export, error) {
 	target := opts.TargetStatuses
 	if target == nil {
@@ -113,10 +114,11 @@ type DownloadAllResultsOptions struct {
 // completed, stream the presigned URL to targetPath.
 //
 // Returns a WaiterTimeoutError if the export doesn't reach a terminal state within WaitTimeout.
-// Returns an APIError with the server's error message on status=failed. The server-side
-// export is capped at 1 GiB per run — for larger runs (or one file per task), use
-// DownloadToDir instead: it fetches each body client-side with no size limit, at the cost of
-// being slower.
+// Returns an APIError with the server's error message on status=failed. The server caps the
+// total size of one export; for a run over the cap (or for one file per task), use
+// DownloadToDir instead. It fetches each body client-side, so the export cap doesn't apply,
+// at the cost of being slower; its own MaxFiles and MaxBytesPerFile limits (100,000 files and
+// 50 MiB per file by default, both configurable) still do.
 func (c *Client) DownloadAllResults(ctx context.Context, jobID, runID, targetPath string, opts DownloadAllResultsOptions) (string, error) {
 	chunkSize := opts.ChunkSize
 	if chunkSize <= 0 {

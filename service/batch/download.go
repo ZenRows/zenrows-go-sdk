@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -199,10 +200,17 @@ type DownloadToDirOptions struct {
 	Concurrency     int // defaults to 1 (serial)
 	MaxFiles        int // defaults to DefaultMaxFiles
 	MaxBytesPerFile int // defaults to DefaultMaxBytesPerFile
+	// Skipped, when non-nil, collects the matching rows that have no body to download: a
+	// failed task, or a successful one whose stored body has expired (TaskStatusExpired).
+	// Such rows are skipped, appended here, and don't count toward the row cap. Any other row
+	// without a ResultURL (for example a successful row the API could not sign a URL for) is
+	// still an error, so a successful result never goes missing silently.
+	Skipped *[]TaskResult
 }
 
 // DownloadToDir streams every (matching) task's body into targetDir. Returns the count
-// written. Concurrency parallelizes the body-fetch + write; with the default 1, behavior is
+// written. Failed and expired rows have no body and are skipped; see
+// DownloadToDirOptions.Skipped. Concurrency parallelizes the body-fetch + write; with the default 1, behavior is
 // exactly serial. Results are NOT guaranteed to be in any particular order when
 // Concurrency > 1.
 func (c *Client) DownloadToDir(ctx context.Context, jobID, targetDir string, opts DownloadToDirOptions) (int, error) {
@@ -248,7 +256,7 @@ func (c *Client) DownloadToDir(ctx context.Context, jobID, targetDir string, opt
 		return os.WriteFile(path, body, filePerm)
 	}
 
-	return runBulk(ctx, c, jobID, opts.RunID, status, handle, opts.Concurrency, maxFiles, "max_files")
+	return runBulk(ctx, c, jobID, opts.RunID, status, handle, opts.Skipped, opts.Concurrency, maxFiles, "max_files")
 }
 
 // ----- bulk: to-memory -----
@@ -262,9 +270,16 @@ type DownloadToMemoryOptions struct {
 	MaxCount        int    // defaults to DefaultMaxCountInMemory
 	MaxTotalBytes   int64  // defaults to DefaultMaxTotalBytesInMemory
 	MaxBytesPerFile int    // defaults to DefaultMaxBytesPerFile
+	// Skipped, when non-nil, collects the matching rows that have no body to download: a
+	// failed task, or a successful one whose stored body has expired (TaskStatusExpired).
+	// Such rows are skipped, appended here, and don't count toward the row cap. Any other row
+	// without a ResultURL (for example a successful row the API could not sign a URL for) is
+	// still an error, so a successful result never goes missing silently.
+	Skipped *[]TaskResult
 }
 
-// DownloadToMemory loads every (matching) task body into a slice and returns it. Three
+// DownloadToMemory loads every (matching) task body into a slice and returns it. Failed and
+// expired rows have no body and are skipped; see DownloadToMemoryOptions.Skipped. Three
 // independent caps that all return DownloadLimitExceededError: MaxCount (row count), MaxTotalBytes
 // (running sum of body sizes), MaxBytesPerFile (any single oversize body aborts). Returned
 // slice ordering is NOT guaranteed when Concurrency > 1.
@@ -308,7 +323,7 @@ func (c *Client) DownloadToMemory(ctx context.Context, jobID string, opts Downlo
 		return nil
 	}
 
-	if _, err := runBulk(ctx, c, jobID, opts.RunID, status, handle, opts.Concurrency, maxCount, "max_count"); err != nil {
+	if _, err := runBulk(ctx, c, jobID, opts.RunID, status, handle, opts.Skipped, opts.Concurrency, maxCount, "max_count"); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -316,17 +331,43 @@ func (c *Client) DownloadToMemory(ctx context.Context, jobID string, opts Downlo
 
 // ----- shared driver -----
 
+// noBody reports whether row is one the API never has a body for: a failed task, or one whose
+// stored body has expired.
+func noBody(row TaskResult) bool {
+	return row.ResultURL == "" && (row.Status == TaskStatusFailed || row.Status == TaskStatusExpired)
+}
+
+// withBodies drops failed and expired rows (see noBody), appending each to skipped when it is
+// non-nil. Every other row, and every error, passes through unchanged. It runs on the driver
+// goroutine, so the append needs no lock.
+func withBodies(rows iter.Seq2[TaskResult, error], skipped *[]TaskResult) iter.Seq2[TaskResult, error] {
+	return func(yield func(TaskResult, error) bool) {
+		for row, err := range rows {
+			if err == nil && noBody(row) {
+				if skipped != nil {
+					*skipped = append(*skipped, row)
+				}
+				continue
+			}
+			if !yield(row, err) {
+				return
+			}
+		}
+	}
+}
+
 // runBulk iterates results + applies handle to each, with optional parallelism via a
-// semaphore-limited goroutine pool. Returns the number of rows processed.
+// semaphore-limited goroutine pool. Failed and expired rows are appended to skipped (when set)
+// instead of handle and don't count toward maxRows. Returns the number of rows processed.
 func runBulk(
 	ctx context.Context, c *Client, jobID, runID, status string,
-	handle func(TaskResult) error, concurrency, maxRows int, maxRowsLimitName string,
+	handle func(TaskResult) error, skipped *[]TaskResult, concurrency, maxRows int, maxRowsLimitName string,
 ) (int, error) {
 	if concurrency <= 0 {
 		concurrency = 1
 	}
 
-	rowsIter := c.IterResults(ctx, jobID, GetResultsOptions{RunID: runID, Status: status})
+	rowsIter := withBodies(c.IterResults(ctx, jobID, GetResultsOptions{RunID: runID, Status: status}), skipped)
 
 	if concurrency == 1 {
 		written := 0
@@ -345,10 +386,21 @@ func runBulk(
 		return written, nil
 	}
 
+	return runBulkConcurrent(rowsIter, handle, concurrency, maxRows, maxRowsLimitName)
+}
+
+// runBulkConcurrent is runBulk's parallel path: up to concurrency workers, never more than
+// maxRows rows handed out in total.
+func runBulkConcurrent(
+	rowsIter iter.Seq2[TaskResult, error], handle func(TaskResult) error, concurrency, maxRows int, maxRowsLimitName string,
+) (int, error) {
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	written := 0
+	// started counts rows handed to a worker. It is checked against maxRows before a worker
+	// starts, so concurrent workers can't together process more than maxRows rows.
+	started := 0
 	var firstErr error
 
 	for row, err := range rowsIter {
@@ -360,17 +412,25 @@ func runBulk(
 			mu.Unlock()
 			break
 		}
+		// Wait for a free worker slot first, then decide: a worker that failed while this
+		// loop was waiting has set firstErr by the time its slot frees up. So once the driver
+		// sees an error it admits no more rows; workers it already admitted may still run.
+		sem <- struct{}{}
 		mu.Lock()
-		if written >= maxRows {
-			if firstErr == nil {
-				firstErr = DownloadLimitExceededError{LimitName: maxRowsLimitName, Limit: int64(maxRows), Observed: int64(written + 1)}
-			}
+		if firstErr != nil {
 			mu.Unlock()
+			<-sem
 			break
 		}
+		if started >= maxRows {
+			firstErr = DownloadLimitExceededError{LimitName: maxRowsLimitName, Limit: int64(maxRows), Observed: int64(started + 1)}
+			mu.Unlock()
+			<-sem
+			break
+		}
+		started++
 		mu.Unlock()
 
-		sem <- struct{}{}
 		wg.Add(1)
 		go func(row TaskResult) {
 			defer wg.Done()

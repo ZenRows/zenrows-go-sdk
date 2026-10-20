@@ -16,6 +16,18 @@ func (e WaiterTimeoutError) Error() string {
 	return fmt.Sprintf("waiter: timed out after %s waiting for target state", e.Timeout)
 }
 
+// RunPausedError is returned by the run waiters when the run is paused. A paused run makes no
+// progress until it is resumed, so the wait stops instead of running out its timeout. Run is
+// the paused run's state; resume it with Run().Resume, or wait with
+// WaitForRunOptions.WaitThroughPause to keep polling.
+type RunPausedError struct {
+	Run Run
+}
+
+func (e RunPausedError) Error() string {
+	return fmt.Sprintf("waiter: run %s is paused (status %s)", e.Run.RunID, e.Run.Status)
+}
+
 // WaiterError is returned when the resource entered a failure state the caller flagged.
 type WaiterError struct {
 	Value any
