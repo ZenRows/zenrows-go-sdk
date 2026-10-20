@@ -110,7 +110,7 @@ func WithAPIKey(apiKey string) Option {
 }
 
 // WithMaxRetryCount returns an Option which configures the maximum number of retries to perform. Defaults to 2; set 0 to
-// turn retries off. A negative count is invalid: every call then returns an InvalidOptionError.
+// turn retries off. A negative count is invalid: every scrape call then returns an InvalidOptionError.
 func WithMaxRetryCount(maxRetryCount int) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.maxRetryCount = maxRetryCount
@@ -119,7 +119,7 @@ func WithMaxRetryCount(maxRetryCount int) Option {
 
 // WithRetryWaitTime returns an Option which configures the base of the exponential backoff between retries: retry n waits a
 // random time between 250ms and max(250ms, min(RetryMaxWaitTime, RetryWaitTime * 2^n)), with n = 0 for the first retry.
-// Defaults to 1 second. A value of zero or less is invalid: every call then returns an InvalidOptionError.
+// Defaults to 1 second. A value of zero or less is invalid: every scrape call then returns an InvalidOptionError.
 func WithRetryWaitTime(retryWaitTime time.Duration) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.retryWaitTime = retryWaitTime
@@ -128,8 +128,8 @@ func WithRetryWaitTime(retryWaitTime time.Duration) Option {
 
 // WithRetryMaxWaitTime returns an Option which configures the maximum backoff wait before a retry. Defaults to 30 seconds.
 // The wait is never under 250ms, even when this is smaller. A Retry-After header sent by the API replaces the backoff wait,
-// and is honored up to a fixed 30 seconds, whatever this option says. A value of zero or less is invalid: every call then
-// returns an InvalidOptionError.
+// and is honored up to a fixed 30 seconds, whatever this option says. A value of zero or less is invalid: every scrape call
+// then returns an InvalidOptionError.
 func WithRetryMaxWaitTime(retryMaxWaitTime time.Duration) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.retryMaxWaitTime = retryMaxWaitTime
@@ -138,8 +138,8 @@ func WithRetryMaxWaitTime(retryMaxWaitTime time.Duration) Option {
 
 // WithRetryBudget returns an Option which bounds when a retry may start: no retry starts when the time since the first
 // attempt plus the wait before the retry would exceed it. It does not cut an attempt short, so a call can run past the
-// budget by one attempt. Defaults to 90 seconds. A value of zero or less is invalid: every call then returns an
-// InvalidOptionError. Use WithMaxRetryCount(0) to turn retries off.
+// budget by one attempt. Defaults to 90 seconds. A value of zero or less is invalid: every scrape call then returns
+// an InvalidOptionError. Use WithMaxRetryCount(0) to turn retries off.
 func WithRetryBudget(retryBudget time.Duration) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.retryBudget = retryBudget

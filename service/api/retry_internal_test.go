@@ -223,38 +223,6 @@ func TestRetryBudgetCountsFromTheFirstAttempt(t *testing.T) {
 	}
 }
 
-// Extract's AutoParse fallback shares the extract attempt's budget instead of starting a new one.
-func TestExtractFallbackSharesTheRetryBudget(t *testing.T) {
-	clock := newFakeClock()
-	server, calls := newClockServer(t, clock, 0, func(n int32, w http.ResponseWriter) {
-		switch n {
-		case 1: // the extract attempt: 503 at 50s
-			clock.advance(50 * time.Second)
-			w.WriteHeader(http.StatusServiceUnavailable)
-		case 2: // its retry: AUTH010 at 80s
-			clock.advance(30 * time.Second)
-			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(http.StatusPaymentRequired)
-			_, _ = w.Write([]byte(`{"code":"AUTH010","title":"Domain not enabled","status":402}`))
-		case 3: // the fallback: 503 at 100s, past the shared budget
-			clock.advance(20 * time.Second)
-			w.WriteHeader(http.StatusServiceUnavailable)
-		default: // a retry of the fallback, which a fresh budget would allow
-			w.WriteHeader(http.StatusOK)
-		}
-	})
-	c := NewClient(WithBaseURL(server.URL), WithAPIKey("k"))
-	c.now, c.randN = clock.now, randAtZero
-
-	res, err := c.Extract(context.Background(), "https://example.com", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if res.StatusCode() != http.StatusServiceUnavailable || calls.Load() != 3 {
-		t.Fatalf("expected the fallback's 503 with no retry after 3 calls, got status %d after %d calls", res.StatusCode(), calls.Load())
-	}
-}
-
 type timeoutError struct{}
 
 func (timeoutError) Error() string   { return "i/o timeout" }

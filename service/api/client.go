@@ -24,7 +24,7 @@ type Client struct {
 	cfg                  options
 	http                 *resty.Client
 	concurrencySemaphore chan struct{}
-	// optionsErr is the error every call returns when an option was invalid, so no request is sent.
+	// optionsErr is the error every scrape call returns when an option was invalid, so no request is sent.
 	optionsErr error
 	// now and randN are the clock and the random source of the retry waits; tests replace them.
 	now   func() time.Time
@@ -32,7 +32,8 @@ type Client struct {
 }
 
 // NewClient creates and returns a new ZenRows Fetch API client. When an option has an invalid value,
-// every call on the client returns an InvalidOptionError and sends nothing.
+// every scrape call on the client (Get, Post, Put, Fetch, Extract and Scrape) returns an
+// InvalidOptionError and sends nothing.
 func NewClient(opts ...Option) *Client {
 	client := &Client{cfg: defaultOptions(), now: time.Now, randN: rand.N[time.Duration]}
 
@@ -116,8 +117,7 @@ func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *R
 	}
 
 	// execute the request, and return the response or an error if one occurred. The retry budget
-	// starts now, after any wait for a concurrency slot, unless an earlier request of the same call
-	// started it.
+	// starts now, after any wait for a concurrency slot.
 	ctx = c.withRetryCall(ctx, isReplayable(method, req.Header, body))
 	res, err := req.SetContext(ctx).Execute(method, "/")
 	if err != nil {
@@ -167,11 +167,7 @@ func (c *Client) Fetch(ctx context.Context, targetURL string, params *RequestPar
 // A 422 with problem code no_data_extracted means Extract knows this kind of page but found
 // no data on it. It is not charged and is never retried; check it with
 // Response.IsNoDataExtracted.
-//
-// The extract attempt and the AutoParse fallback share one retry budget: no retry of either
-// starts after the budget (90 seconds by default) has run out.
 func (c *Client) Extract(ctx context.Context, targetURL string, params *RequestParameters) (*Response, error) {
-	ctx = withCallBudget(ctx)
 	extractParams := RequestParameters{}
 	if params != nil {
 		extractParams = *params

@@ -275,8 +275,9 @@ The SDK provides custom error types for better error handling:
 - `InvalidHTTPMethodError`: Thrown when an unsupported HTTP method is used (e.g., when sending PATCH or DELETE requests).
 - `InvalidTargetURLError`: Thrown when an invalid target URL is provided (e.g., target URL is empty, or malformed).
 - `InvalidParameterError`: Thrown when invalid parameters are used in the request. See the error message for details.
-- `InvalidOptionError`: Returned by every call on a client created with an invalid option value (for example, `WithRetryBudget(0)`
-or `WithMaxRetryCount(-1)`). `NewClient` does not return an error, so the client reports it on each call and sends no request.
+- `InvalidOptionError`: Returned by every scrape call (`Get`, `Post`, `Put`, `Fetch`, `Extract` and `Scrape`) on a client created
+with an invalid retry option value (for example, `WithRetryBudget(0)` or `WithMaxRetryCount(-1)`). `NewClient` does not return an
+error, so the client reports it on each scrape call and sends no request.
  
 ### Examples
 
@@ -357,7 +358,7 @@ done
 
 #### Retrying
 
-By default, the client retries a failed request up to 2 times. `WithMaxRetryCount(0)` turns retries off.
+By default, the client retries a failed scrape request up to 2 times. `WithMaxRetryCount(0)` turns retries off.
 
 The client retries these failures:
 
@@ -392,12 +393,15 @@ Before each retry, the client waits:
 
 No retry starts after 90 seconds: the client does not start a retry when the time since the first attempt plus the next
 wait would pass the retry budget (`WithRetryBudget`, 90 seconds by default). The budget does not cut a running attempt
-short, so a call can run past it by one attempt. `Extract` and its AutoParse fallback share one budget.
+short, so a call can run past it by one attempt.
 
 To stop a call, cancel its context: the wait before a retry ends at once, and the client sends no further request.
 
 `WithRetryWaitTime`, `WithRetryMaxWaitTime` and `WithRetryBudget` must be greater than zero, and `WithMaxRetryCount`
-must be 0 or more. A client created with an invalid value returns an `InvalidOptionError` from every call.
+must be 0 or more. A client created with an invalid value returns an `InvalidOptionError` from every scrape call.
+
+These retries apply to scrape calls only. The client never retries `PrepareDomain()` or `PreparedDomainStatus()`: their `429`
+and `503` answers are for you to read (see [Preparing a domain](#preparing-a-domain)).
 
 See the [example](examples/retries/main.go) below for a demonstration of how to use the SDK with retries:
 

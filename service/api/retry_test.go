@@ -410,11 +410,16 @@ func TestCancelDuringTheRetryWaitStopsTheCall(t *testing.T) {
 	}
 }
 
-// A retryable failure on the extract attempt is retried, and the AUTH010 fallback still follows.
-func TestExtractRetriesThenFallsBackOnAuth010(t *testing.T) {
+// Extract is retried like Get. A 402 AUTH010 after a retry is a final answer: Extract returns it
+// as is and sends no further request.
+func TestExtractRetriesThenReturnsAuth010AsIs(t *testing.T) {
 	var calls atomic.Int32
-	var fallbackQuery string
+	var mu sync.Mutex
+	var queries []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		queries = append(queries, r.URL.RawQuery)
+		mu.Unlock()
 		switch calls.Add(1) {
 		case 1:
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -423,7 +428,6 @@ func TestExtractRetriesThenFallsBackOnAuth010(t *testing.T) {
 			w.WriteHeader(http.StatusPaymentRequired)
 			_, _ = w.Write([]byte(`{"code":"AUTH010","title":"Domain not enabled","status":402}`))
 		default:
-			fallbackQuery = r.URL.RawQuery
 			w.WriteHeader(http.StatusOK)
 		}
 	}))
@@ -433,10 +437,47 @@ func TestExtractRetriesThenFallsBackOnAuth010(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !res.IsSuccess() || calls.Load() != 3 {
-		t.Fatalf("expected 503, AUTH010, then a successful fallback; got status %d after %d calls", res.StatusCode(), calls.Load())
+	if res.StatusCode() != http.StatusPaymentRequired || calls.Load() != 2 {
+		t.Fatalf("expected a 503, then the AUTH010 as is; got status %d after %d calls", res.StatusCode(), calls.Load())
 	}
-	if !contains(fallbackQuery, "autoparse=true") || contains(fallbackQuery, "extract=") {
-		t.Fatalf("expected the fallback to set autoparse and drop extract, got %q", fallbackQuery)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, query := range queries {
+		if !contains(query, "extract=auto") || contains(query, "autoparse") {
+			t.Fatalf("expected every request to be the extract request, got %q", query)
+		}
+	}
+}
+
+// PrepareDomain and PreparedDomainStatus are sent once, even by a client that retries: their 429
+// (no preparations left) and 503 (overloaded or disabled) are answers to read, not failures to retry.
+func TestPreparedDomainCallsAreNotRetried(t *testing.T) {
+	calls := map[string]func(*scraperapi.Client) error{
+		"PrepareDomain": func(c *scraperapi.Client) error {
+			_, err := c.PrepareDomain(context.Background(), "www.example.com", nil)
+			return err
+		},
+		"PreparedDomainStatus": func(c *scraperapi.Client) error {
+			_, err := c.PreparedDomainStatus(context.Background(), "www.example.com")
+			return err
+		},
+	}
+	for name, call := range calls {
+		for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+			t.Run(name+"/"+strconv.Itoa(status), func(t *testing.T) {
+				// The first answer is the error; a retry would get a 200 and hide it.
+				server, got := newStatusServer(t, "0", status, http.StatusOK)
+				// The default client retries a 429 or a 503 twice on every scrape call.
+				client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("k"))
+
+				var perr *scraperapi.PreparedDomainError
+				if err := call(client); !errors.As(err, &perr) || perr.StatusCode != status {
+					t.Fatalf("expected a %d PreparedDomainError, got %v", status, err)
+				}
+				if got.count() != 1 {
+					t.Fatalf("expected 1 request, got %d", got.count())
+				}
+			})
+		}
 	}
 }

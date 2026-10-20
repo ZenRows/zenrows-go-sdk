@@ -55,8 +55,10 @@ func (e InvalidParameterError) Error() string {
 	return e.Msg
 }
 
-// InvalidOptionError results when the ZenRows Fetch API client was created with an invalid option value. NewClient
-// does not return an error, so every call on such a client returns this error and sends no request.
+// InvalidOptionError results when the ZenRows Fetch API client was created with an invalid retry option value. NewClient
+// does not return an error, so every scrape call on such a client (Get, Post, Put, Fetch, Extract and Scrape) returns
+// this error and sends no request. PrepareDomain and PreparedDomainStatus do not use the retry options and do not
+// return it.
 type InvalidOptionError struct {
 	Msg string
 }

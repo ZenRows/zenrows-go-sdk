@@ -37,45 +37,22 @@ var retryableStatusCodes = []int{
 	http.StatusGatewayTimeout,
 }
 
-type callBudgetKey struct{}
-
 type retryCallKey struct{}
 
-// callBudget is the retry budget of one logical call. Extract's AutoParse fallback shares the budget
-// of the extract attempt, so one Extract call never gets two budgets.
-type callBudget struct {
-	// start is when the first attempt of the call began. Zero until the first request starts.
-	start time.Time
-}
-
 // retryCall follows one request across its attempts. resty runs the attempts of a request one after
-// another, and the requests of one logical call run one after another too, so it needs no lock.
+// another, so it needs no lock.
 type retryCall struct {
-	budget *callBudget
+	// start is when the first attempt began. The retry budget counts from it.
+	start time.Time
 	// replayable is false for a request that must be sent at most once (see isReplayable).
 	replayable bool
 	// nextWait is the wait shouldRetry chose for the coming retry, read back by retryAfter.
 	nextWait time.Duration
 }
 
-// withCallBudget returns ctx carrying a fresh budget for one logical call. The budget starts when
-// the call's first request starts.
-func withCallBudget(ctx context.Context) context.Context {
-	return context.WithValue(ctx, callBudgetKey{}, &callBudget{})
-}
-
-// withRetryCall returns ctx carrying the retry state of one request. The request uses the call
-// budget in ctx when there is one, or a budget of its own otherwise. The budget starts now if it has
-// not started yet.
+// withRetryCall returns ctx carrying the retry state of one request. Its retry budget starts now.
 func (c *Client) withRetryCall(ctx context.Context, replayable bool) context.Context {
-	budget, ok := ctx.Value(callBudgetKey{}).(*callBudget)
-	if !ok {
-		budget = &callBudget{}
-	}
-	if budget.start.IsZero() {
-		budget.start = c.now()
-	}
-	return context.WithValue(ctx, retryCallKey{}, &retryCall{budget: budget, replayable: replayable})
+	return context.WithValue(ctx, retryCallKey{}, &retryCall{start: c.now(), replayable: replayable})
 }
 
 func retryCallFrom(r *resty.Response) (*retryCall, bool) {
@@ -112,7 +89,7 @@ func (c *Client) shouldRetry(r *resty.Response, err error) bool {
 	}
 	// resty counts attempts from 1, so the first retry follows attempt 1 and uses exponent 0.
 	wait := c.retryWait(r.Header().Get("Retry-After"), r.Request.Attempt-1)
-	if c.now().Sub(call.budget.start)+wait > c.cfg.retryOptions.retryBudget {
+	if c.now().Sub(call.start)+wait > c.cfg.retryOptions.retryBudget {
 		return false
 	}
 	call.nextWait = wait
