@@ -172,14 +172,21 @@ The legacy `402` with problem code `AUTH010` means the domain isn't enabled. `Ex
 
 #### Preparing a domain
 
-`client.PrepareDomain(ctx, domain, exampleURLs)` submits a domain for Extract (`POST /v1/extract/prepared-domains`), and `client.PreparedDomainStatus(ctx, domain)` reads where it is (`GET /v1/extract/prepared-domains/{domain}`). Both return the parsed `*scraperapi.PreparedDomainStatus`. Pass the domain without a scheme and 1 to 5 example URLs, one per kind of page you want to extract. These calls cost no credits, and the client's retry settings don't apply to them.
+`client.PrepareDomain(ctx, domain, exampleURLs)` submits a domain for Extract (`POST /v1/extract/prepared-domains`), and `client.PreparedDomainStatus(ctx, domain)` reads where it is (`GET /v1/extract/prepared-domains/{domain}`). Both return the parsed `*scraperapi.PreparedDomainStatus`. Pass the domain without a scheme and 1 to 5 example URLs on that domain.
+
+One example URL works, but up to 5 related URLs work better: send several pages of each page type you need parsed. We recommend at least 3 (for one page type, 3 pages of that type). Extract compares the pages of one type against each other, so it can check the fields it found and fill in fields that one page is missing; more pages of a type give more complete, more reliable results for that type. Several types can share the 5, for example 3 product pages and 2 search-result pages.
+
+These calls cost no credits, and the client's retry settings don't apply to them.
 
 Preparation takes minutes, and the client does not wait for it. Poll the status until it is no longer `"preparing"`:
 
 ```go
 ctx := context.Background()
 status, err := client.PrepareDomain(ctx, "www.scrapingcourse.com", []string{
-    "https://www.scrapingcourse.com/ecommerce/",
+    // three pages of one page type: product pages
+    "https://www.scrapingcourse.com/ecommerce/product/abominable-hoodie/",
+    "https://www.scrapingcourse.com/ecommerce/product/adrienne-trek-jacket/",
+    "https://www.scrapingcourse.com/ecommerce/product/aeon-capri/",
 })
 for err == nil && status.Status == "preparing" {
     time.Sleep(30 * time.Second)
