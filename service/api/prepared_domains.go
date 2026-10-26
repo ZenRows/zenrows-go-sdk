@@ -85,10 +85,10 @@ func (e *PreparedDomainError) Error() string {
 // returns the status the API answers with 202. domain is the domain without a scheme;
 // exampleURLs are 1 to 5 URLs on that domain.
 //
-// One example URL works, but several pages of the same page type work better: Extract compares
-// the pages of one type against each other, so it can check the fields it found and fill in
-// fields that one page is missing. Pass at least 3 URLs of each page type you need, up to 5 in
-// total; several types can share the 5, for example 3 product pages and 2 search-result pages.
+// One example URL works; we recommend 3 or more of the same page type (for example 3 product
+// pages), because Extract compares pages of one type to check the fields it found and fill in
+// fields one page is missing. Several page types can share the 5 (for example 3 product pages
+// and 2 search-result pages).
 //
 // Submitting a domain that is already prepared returns its current status instead of starting
 // a new run.
@@ -108,9 +108,7 @@ func (c *Client) PrepareDomain(ctx context.Context, domain string, exampleURLs [
 		exampleURLs = []string{}
 	}
 	body, err := json.Marshal(struct {
-		Domain string `json:"domain"`
-		// ExampleURLs are 1 to 5 URLs on Domain. At least 3 of the same page type give more
-		// complete, more reliable results for that type than 1.
+		Domain      string   `json:"domain"`
 		ExampleURLs []string `json:"example_urls"`
 	}{domain, exampleURLs})
 	if err != nil {

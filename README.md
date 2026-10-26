@@ -49,8 +49,9 @@ The `service/api` SDK is a Go client for the ZenRows Fetch API, allowing develop
 websites with support for various configurations like JavaScript rendering, custom headers, retries, and more.
 It also wraps [Extract](https://docs.zenrows.com/extract/introduction): `client.Extract()` returns a page
 as structured JSON instead of raw HTML, on any prepared domain (you can prepare one yourself with
-`POST /v1/extract/prepared-domains`). To prepare a domain, pass at least 3 example URLs of the same page
-type when you can, up to 5: Extract compares them to check and complete the fields it finds.
+`POST /v1/extract/prepared-domains`). To prepare a domain, pass 1 to 5 example URLs. One works; we
+recommend 3 or more of the same page type (e.g. 3 product pages), because Extract compares pages of
+one type to check the fields it found and fill in fields one page is missing.
 
 - [Installation and Usage](./service/api/README.md)
 - [API Reference](https://docs.zenrows.com/scraper-api/api-reference)

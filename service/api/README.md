@@ -174,7 +174,7 @@ The legacy `402` with problem code `AUTH010` means the domain isn't enabled. `Ex
 
 `client.PrepareDomain(ctx, domain, exampleURLs)` submits a domain for Extract (`POST /v1/extract/prepared-domains`), and `client.PreparedDomainStatus(ctx, domain)` reads where it is (`GET /v1/extract/prepared-domains/{domain}`). Both return the parsed `*scraperapi.PreparedDomainStatus`. Pass the domain without a scheme and 1 to 5 example URLs on that domain.
 
-One example URL works, but up to 5 related URLs work better: send several pages of each page type you need parsed. We recommend at least 3 (for one page type, 3 pages of that type). Extract compares the pages of one type against each other, so it can check the fields it found and fill in fields that one page is missing; more pages of a type give more complete, more reliable results for that type. Several types can share the 5, for example 3 product pages and 2 search-result pages.
+One example URL works; we recommend 3 or more of the same page type (e.g. 3 product pages), because Extract compares pages of one type to check the fields it found and fill in fields one page is missing. Several page types can share the 5 (e.g. 3 product pages + 2 search-result pages).
 
 These calls cost no credits, and the client's retry settings don't apply to them.
 
