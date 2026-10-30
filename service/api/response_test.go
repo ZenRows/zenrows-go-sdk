@@ -14,7 +14,8 @@ func doGet(t *testing.T, handler http.HandlerFunc) *scraperapi.Response {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"))
+	// These tests read one response as it came: a retry would only slow them down.
+	client := scraperapi.NewClient(scraperapi.WithBaseURL(server.URL), scraperapi.WithAPIKey("test-key"), scraperapi.WithMaxRetryCount(0))
 	res, err := client.Get(context.Background(), "https://example.com", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

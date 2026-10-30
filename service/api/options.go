@@ -1,19 +1,17 @@
 package scraperapi
 
 import (
-	"net/http"
 	"os"
 	"time"
 )
 
 const (
 	defaultBaseURL          = "https://api.zenrows.com/v1"
-	defaultMaxRetryCount    = 0
-	defaultRetryWaitTime    = 5 * time.Second
+	defaultMaxRetryCount    = 2
+	defaultRetryWaitTime    = 1 * time.Second
 	defaultRetryMaxWaitTime = 30 * time.Second
+	defaultRetryBudget      = 90 * time.Second
 )
-
-var retryableStatusCodes = []int{http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError}
 
 // Option configures the ZenRows Fetch API client.
 type Option interface {
@@ -32,18 +30,41 @@ type options struct {
 	maxConcurrentRequests int
 }
 
-// retryOptions holds the configuration for the retry mechanism of the ZenRows Fetch API client. Only response status codes in
-// the retryableStatusCodes list will be retried.
+// retryOptions holds the configuration for the retry mechanism of the ZenRows Fetch API client. Only the statuses
+// isRetryableStatus accepts and connection failures before the request was sent are retried, and only for a GET
+// (see isReplayable in retry.go). A POST or a PUT is always sent once.
 type retryOptions struct {
-	// maxRetryCount is the maximum number of retries to perform. If set to a non-zero value, the client will retry the request up to
-	// this number of times using a backoff strategy. Defaults to 0.
+	// maxRetryCount is the maximum number of retries of a GET. Defaults to 2; 0 turns retries off. It must not be
+	// negative. It does not apply to a POST or a PUT, which the client never retries.
 	maxRetryCount int
 
-	// retryWaitTime is the time to wait before retrying the request. Defaults to 5 seconds.
+	// retryWaitTime is the base of the exponential backoff: retry n waits a random time between 250ms and
+	// max(250ms, min(retryMaxWaitTime, retryWaitTime * 2^n)), with n = 0 for the first retry. Defaults to 1 second.
+	// It must be greater than zero.
 	retryWaitTime time.Duration
 
-	// retryMaxWaitTime is the maximum time to wait before retrying the request. Defaults to 30 seconds.
+	// retryMaxWaitTime is the upper bound of the backoff wait. Defaults to 30 seconds. It does not bound a
+	// Retry-After header, which is honored up to a fixed 30 seconds. It must be greater than zero.
 	retryMaxWaitTime time.Duration
+
+	// retryBudget bounds when a retry may start: no retry starts when the time since the first attempt plus the
+	// wait before the retry would exceed it. Defaults to 90 seconds. It must be greater than zero.
+	retryBudget time.Duration
+}
+
+// validate returns an InvalidOptionError for the first retry option with an invalid value, or nil.
+func (o retryOptions) validate() error {
+	switch {
+	case o.maxRetryCount < 0:
+		return InvalidOptionError{Msg: "WithMaxRetryCount must be 0 or more"}
+	case o.retryWaitTime <= 0:
+		return InvalidOptionError{Msg: "WithRetryWaitTime must be greater than zero"}
+	case o.retryMaxWaitTime <= 0:
+		return InvalidOptionError{Msg: "WithRetryMaxWaitTime must be greater than zero"}
+	case o.retryBudget <= 0:
+		return InvalidOptionError{Msg: "WithRetryBudget must be greater than zero"}
+	}
+	return nil
 }
 
 // defaultOptions returns the default options for the ZenRows Fetch API client.
@@ -55,6 +76,7 @@ func defaultOptions() options {
 			maxRetryCount:    defaultMaxRetryCount,
 			retryWaitTime:    defaultRetryWaitTime,
 			retryMaxWaitTime: defaultRetryMaxWaitTime,
+			retryBudget:      defaultRetryBudget,
 		},
 	}
 }
@@ -88,24 +110,47 @@ func WithAPIKey(apiKey string) Option {
 	})
 }
 
-// WithMaxRetryCount returns an Option which configures the maximum number of retries to perform.
+// WithMaxRetryCount returns an Option which configures the maximum number of retries to perform. Defaults to 2; set 0 to
+// turn retries off. A negative count is invalid: every scrape call then returns an InvalidOptionError.
+//
+// Only a GET is retried (Get, Fetch, Extract, or Scrape with GET). The client sends a POST or a PUT once, whatever this
+// count or the request's headers say. The API does not dedupe a request on its Idempotency-Key header, so the client
+// does not retry on it. A caller who needs to retry a POST or a PUT must write that retry itself.
+//
+// The client never retries a status that comes from the target site: any status when the request sets
+// RequestParameters.ReturnOriginalStatus, or a status listed in RequestParameters.AllowedStatusCodes.
 func WithMaxRetryCount(maxRetryCount int) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.maxRetryCount = maxRetryCount
 	})
 }
 
-// WithRetryWaitTime returns an Option which configures the time to wait before retrying the request.
+// WithRetryWaitTime returns an Option which configures the base of the exponential backoff between retries: retry n waits a
+// random time between 250ms and max(250ms, min(RetryMaxWaitTime, RetryWaitTime * 2^n)), with n = 0 for the first retry.
+// Defaults to 1 second. A value of zero or less is invalid: every scrape call then returns an InvalidOptionError.
 func WithRetryWaitTime(retryWaitTime time.Duration) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.retryWaitTime = retryWaitTime
 	})
 }
 
-// WithRetryMaxWaitTime returns an Option which configures the maximum time to wait before retrying the request.
+// WithRetryMaxWaitTime returns an Option which configures the maximum backoff wait before a retry. Defaults to 30 seconds.
+// The wait is never under 250ms, even when this is smaller. A Retry-After header sent by the API replaces the backoff wait,
+// and is honored up to a fixed 30 seconds, whatever this option says. A value of zero or less is invalid: every scrape call
+// then returns an InvalidOptionError.
 func WithRetryMaxWaitTime(retryMaxWaitTime time.Duration) Option {
 	return newFuncDialOption(func(o *options) {
 		o.retryOptions.retryMaxWaitTime = retryMaxWaitTime
+	})
+}
+
+// WithRetryBudget returns an Option which bounds when a retry may start: no retry starts when the time since the first
+// attempt plus the wait before the retry would exceed it. It does not cut an attempt short, so a call can run past the
+// budget by one attempt. Defaults to 90 seconds. A value of zero or less is invalid: every scrape call then returns
+// an InvalidOptionError. Use WithMaxRetryCount(0) to turn retries off.
+func WithRetryBudget(retryBudget time.Duration) Option {
+	return newFuncDialOption(func(o *options) {
+		o.retryOptions.retryBudget = retryBudget
 	})
 }
 
