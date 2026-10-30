@@ -136,6 +136,50 @@ func (d DiscoveryStrategy) IsKnown() bool {
 	return d == DiscoveryLinks
 }
 
+// WebhookEventType names an event a crawl's webhook is sent.
+// The server may add values not listed here, and they decode as-is; callers must handle
+// unknown values (e.g. a default branch, or IsKnown) rather than assume the constants are exhaustive.
+type WebhookEventType string
+
+const (
+	// WebhookEventCrawlStarted is sent once the crawl is created and runs.
+	WebhookEventCrawlStarted WebhookEventType = "crawl.started"
+	// WebhookEventCrawlCompleted is sent when the crawl ends StatusCompleted.
+	WebhookEventCrawlCompleted WebhookEventType = "crawl.completed"
+	// WebhookEventCrawlStopped is sent when the crawl ends StatusStopped, after the pages fetched
+	// before the stop have been read.
+	WebhookEventCrawlStopped WebhookEventType = "crawl.stopped"
+	// WebhookEventCrawlFailed is sent when the crawl ends StatusFailed.
+	WebhookEventCrawlFailed WebhookEventType = "crawl.failed"
+)
+
+// IsKnown reports whether e is one of the WebhookEventType constants this SDK version defines.
+func (e WebhookEventType) IsKnown() bool {
+	switch e {
+	case WebhookEventCrawlStarted, WebhookEventCrawlCompleted, WebhookEventCrawlStopped, WebhookEventCrawlFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Webhook is where a crawl's events are sent, and which ones. It is set at create and cannot be
+// changed afterwards. Every event is signed with the account's webhook signing key, so the
+// account needs one: without it Create fails with a 422 webhook_signing_key_required. A field
+// that breaks the rules below fails with a 422 invalid_webhook, whose detail names the field.
+type Webhook struct {
+	// URL is the absolute https URL each event is posted to, up to 2,048 characters. Its host
+	// must resolve to a public address. Required.
+	URL string `json:"url"`
+	// Events narrows which events are sent: each WebhookEventType at most once, in any order.
+	// Leave it empty for all four. On a returned Crawl it is always the effective list.
+	Events []WebhookEventType `json:"events,omitempty"`
+	// Metadata is sent back with every event, to match it to your own records: up to 20 keys of
+	// 1 to 64 characters, each value any JSON value of at most 1,024 bytes as compact JSON. Nil
+	// when the crawl has none. Numbers decode as float64; send a json.Number to keep every digit.
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
 // CreateParams is the body for Client.Create. Only the fields you set are sent; the API applies
 // its defaults to the rest.
 type CreateParams struct {
@@ -160,6 +204,9 @@ type CreateParams struct {
 	// Discovery is how the crawl finds the URLs it follows on each page it walks. Leave it
 	// empty for DiscoveryLinks, which follows the links in the page's HTML.
 	Discovery []DiscoveryStrategy `json:"discovery,omitempty"`
+	// Webhook sends the crawl's events, when it starts and how it ends, to a URL you choose. Nil
+	// for none.
+	Webhook *Webhook `json:"webhook,omitempty"`
 	// IdempotencyKey (up to 255 characters) makes a retry safe: the same key with the same
 	// body answers with the crawl the first request created. It also lets the client retry the
 	// create on transient failures.
@@ -199,11 +246,14 @@ type Crawl struct {
 	OutputFormat    OutputFormat `json:"output_format,omitempty"`
 	// Discovery is the strategies the crawl finds URLs with. It reads ["links"] when the
 	// create left it out, and is empty when the server does not send the field.
-	Discovery         []DiscoveryStrategy `json:"discovery,omitempty"`
-	Coverage          Coverage            `json:"coverage"`
-	DuplicatesRemoved int                 `json:"duplicates_removed,omitempty"`
-	CreatedAt         string              `json:"created_at"`
-	FinishedAt        string              `json:"finished_at,omitempty"`
+	Discovery []DiscoveryStrategy `json:"discovery,omitempty"`
+	// Webhook is where the crawl's events are sent, with Events the effective list. Nil when the
+	// crawl was created without one.
+	Webhook           *Webhook `json:"webhook,omitempty"`
+	Coverage          Coverage `json:"coverage"`
+	DuplicatesRemoved int      `json:"duplicates_removed,omitempty"`
+	CreatedAt         string   `json:"created_at"`
+	FinishedAt        string   `json:"finished_at,omitempty"`
 }
 
 // Result is one URL a crawl kept.

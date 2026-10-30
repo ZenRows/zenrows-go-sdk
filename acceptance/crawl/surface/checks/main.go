@@ -739,12 +739,28 @@ func main() {
 		return outcome{passIf(ok), fmt.Sprintf("%q IsKnown %v", c, c.IsKnown()), ""}
 	})
 
+	run("25", "Webhook", "a create with a webhook returns the crawl carrying that webhook: url, events, metadata", true, func() outcome {
+		hook := crawl.Webhook{
+			URL:      "https://example.com/zenrows-hook",
+			Events:   []crawl.WebhookEventType{crawl.WebhookEventCrawlCompleted},
+			Metadata: map[string]any{"k": "v"},
+		}
+		c, err := create(crawl.CreateParams{URL: "https://www.scrapingcourse.com/ecommerce/", Depth: 1, MaxPages: 1, Webhook: &hook})
+		if err != nil {
+			return outcome{"FAIL", esum(err), "webhook " + js(hook)}
+		}
+		_, _ = client.Stop(ctx, c.CrawlID)
+		w := c.Webhook
+		ok := w != nil && w.URL == hook.URL && slices.Equal(w.Events, hook.Events) && js(w.Metadata) == js(hook.Metadata)
+		return outcome{passIf(ok), fmt.Sprintf("%s, %s; webhook %s", c.CrawlID, c.Status, js(w)), js(c)}
+	})
+
 	naming := map[string]any{
 		"operations": map[string]string{"create": "Create", "get": "Get", "list": "List", "results": "Results", "content": "Content",
 			"download": "Download", "stop": "Stop", "wait": "Wait"},
 		"params": map[string]string{"url": "URL", "depth": "Depth", "max_items": "MaxItems", "max_pages": "MaxPages",
 			"include_patterns": "IncludePatterns", "exclude_patterns": "ExcludePatterns", "output_format": "OutputFormat",
-			"discovery": "Discovery", "idempotency_key": "IdempotencyKey", "cursor": "Cursor", "limit": "Limit",
+			"discovery": "Discovery", "webhook": "Webhook", "idempotency_key": "IdempotencyKey", "cursor": "Cursor", "limit": "Limit",
 			"timeout": "Timeout", "content_id": "contentID", "download": "AsDownload"},
 	}
 	b, _ := json.MarshalIndent(naming, "", "  ")

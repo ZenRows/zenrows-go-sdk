@@ -107,6 +107,7 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
 
 - `Create(ctx, CreateParams)` starts a crawl. Only the fields you set are sent. Leave `Depth`
   out for no depth limit; `Crawl.Depth` is then nil. `MaxItems` and `MaxPages` default to 100.
+  Set `Webhook` to have the crawl's events sent to your URL (see [Webhooks](#webhooks)).
 - `Get(ctx, crawlID, GetOptions)` reads the crawl and one page of results. `NextCursor` is never
   nil while the crawl runs (polling with it returns only new URLs) and nil once the crawl has
   ended and the last page was read.
@@ -127,6 +128,63 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
   when the crawl had not ended yet, so the file is partial. `DownloadLine.Content` holds the raw
   JSON content; `HTML()` decodes it for `OutputFormatHTML`.
 
+## Webhooks
+
+Set `CreateParams.Webhook` to be told when a crawl starts and how it ends, instead of polling:
+
+```go
+created, err := client.Create(ctx, crawl.CreateParams{
+    URL: "https://www.scrapingcourse.com/ecommerce/",
+    Webhook: &crawl.Webhook{
+        URL:      "https://hooks.example.com/zenrows",
+        Events:   []crawl.WebhookEventType{crawl.WebhookEventCrawlCompleted, crawl.WebhookEventCrawlFailed}, // omit for all four
+        Metadata: map[string]any{"site": "ecommerce"}, // sent back with every event
+    },
+})
+```
+
+- `URL` is an absolute `https` URL whose host resolves to a public address. `Events` narrows the
+  events sent: `WebhookEventCrawlStarted`, then exactly one of `WebhookEventCrawlCompleted`,
+  `WebhookEventCrawlStopped` or `WebhookEventCrawlFailed`. `Metadata` takes up to 20 keys, each
+  value at most 1,024 bytes as JSON.
+- The webhook is fixed at create. `Crawl.Webhook` carries it on every read, with `Events` the
+  effective list; it is nil on a crawl without one.
+- Every event is signed with the account's webhook signing key, so the account needs one: create
+  it in the dashboard (Settings, API Keys). Without it `Create` fails with 422
+  `webhook_signing_key_required`.
+
+Each event is a `WebhookEvent` posted as JSON. Verify the raw body before decoding it. An event
+can arrive more than once, with the same `EventID` (also the `X-ZenRows-Event-Id` header): drop
+one you have already handled. Events can arrive out of order: order them by `OccurredAt`, or read
+the crawl with `Get`. Answer with a 2xx within 10 seconds; any other answer is retried, for up to
+3 days.
+
+```go
+func handleCrawlEvent(w http.ResponseWriter, r *http.Request) {
+    body, err := io.ReadAll(r.Body)
+    if err != nil {
+        http.Error(w, "read", http.StatusBadRequest)
+        return
+    }
+    secrets := map[string]string{"<key id>": os.Getenv("ZENROWS_WEBHOOK_SECRET")} // base64, as the dashboard shows it
+    if err := crawl.VerifyWebhookSignature(body, r.Header.Get(crawl.SignatureHeader), secrets, crawl.VerifyWebhookSignatureOptions{}); err != nil {
+        http.Error(w, "bad signature", http.StatusUnauthorized)
+        return
+    }
+    var event crawl.WebhookEvent
+    if err := json.Unmarshal(body, &event); err != nil {
+        http.Error(w, "bad body", http.StatusBadRequest)
+        return
+    }
+    // Dedupe on event.EventID, then act on event.EventType and event.Resource.ID.
+    w.WriteHeader(http.StatusNoContent)
+}
+```
+
+`VerifyWebhookSignature` rejects a signature whose timestamp is more than 5 minutes from now
+(`VerifyWebhookSignatureOptions.Tolerance` changes that, `SkipTimestampCheck` turns it off). The
+header's `kid` picks the secret, so keep the old and the new key in `secrets` while you rotate.
+
 ## Error Handling
 
 - `NotConfiguredError`: the client is missing an API key.
@@ -144,14 +202,18 @@ Configure the client with `WithAPIKey` or the `ZENROWS_API_KEY` environment vari
   - 422 `invalid_parameter`, `invalid_start_url`, `domain_not_allowed` or
     `idempotency_key_reused`: do not retry as is. For `idempotency_key_reused`, use a new key or
     no key.
+  - 422 `invalid_webhook`: the webhook's `URL`, `Events` or `Metadata` breaks a rule; the detail
+    names the field.
+  - 422 `webhook_signing_key_required`: the account has no webhook signing key. Create it in the
+    dashboard, then retry; nothing was created, and the `IdempotencyKey` stays free.
   - 429 `too_many_crawls`: the account has reached its limit of active jobs (3 by default),
     shared with its Batch jobs. Nothing was created; retry after `APIError.RetryAfter`. `Create`
     does not retry it.
   - 503 `crawl_busy`: the stop could not be saved yet; the crawl is still running. Repeating
     the stop is safe, so `Stop` retries any 429, 502, 503 or 504 up to `WithRetries` times,
     waiting `APIError.RetryAfter` (1s when absent, at most 30s), then returns it.
-- String enums on responses (`Status`, `StopReason`, `RunErrorCode`, `ContentStatus`) are
-  extensible: the server may return values this SDK has no constant for. They decode without
+- String enums on responses (`Status`, `StopReason`, `RunErrorCode`, `ContentStatus`,
+  `WebhookEventType`) are extensible: the server may return values this SDK has no constant for. They decode without
   error, so always handle a default case; each type's `IsKnown()` reports whether a value is one
   this SDK version defines.
 
