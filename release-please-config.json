@@ -5,10 +5,14 @@
   "include-v-in-tag": true,
   "tag-separator": "/",
   "separate-pull-requests": true,
-  "skip-changelog": true,
+  "skip-changelog": false,
   "pull-request-title-pattern": "chore: release${component} ${version}",
   "last-release-sha": "aabbb7e2ecd7f68289944ee45669582be94654e8",
   "changelog-sections": [
+    {
+      "type": "behaviour",
+      "section": "Behaviour Changes"
+    },
     {
       "type": "feat",
       "section": "Features"
