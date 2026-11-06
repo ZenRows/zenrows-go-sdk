@@ -54,3 +54,17 @@ func (e InvalidParameterError) Error() string {
 
 	return e.Msg
 }
+
+// InvalidOptionError results when the ZenRows Fetch API client was created with an invalid retry option. Every scrape
+// call on that client returns it and sends no request.
+type InvalidOptionError struct {
+	Msg string
+}
+
+func (e InvalidOptionError) Error() string {
+	if e.Msg == "" {
+		e.Msg = "invalid option"
+	}
+
+	return e.Msg
+}

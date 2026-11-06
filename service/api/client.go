@@ -35,20 +35,7 @@ func NewClient(opts ...Option) *Client {
 		SetLogger(noopLogger{}).
 		SetBaseURL(client.cfg.baseURL).
 		SetHeader("User-Agent", "zenrows-go/"+version.Version).
-		SetQueryParam(apiKeyParamName, client.cfg.apiKey).
-		SetRetryCount(client.cfg.retryOptions.maxRetryCount).
-		SetRetryWaitTime(client.cfg.retryOptions.retryWaitTime).
-		SetRetryMaxWaitTime(client.cfg.retryOptions.retryMaxWaitTime).
-		AddRetryCondition(func(r *resty.Response, err error) bool {
-			if err != nil {
-				return true
-			}
-			// Extract's 422 no_data_extracted is a final answer: another try returns the same.
-			if isNoDataExtracted(r.StatusCode(), r.Body()) {
-				return false
-			}
-			return slices.Contains(retryableStatusCodes, r.StatusCode())
-		})
+		SetQueryParam(apiKeyParamName, client.cfg.apiKey)
 
 	// if the maxConcurrentRequests is set, create a semaphore to limit the number of concurrent requests
 	if client.cfg.maxConcurrentRequests > 0 {
@@ -65,6 +52,10 @@ func (c *Client) isConfigured() bool {
 
 // Scrape sends a request to the ZenRows Fetch API to scrape the given target URL using the specified method and parameters.
 func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *RequestParameters, body any) (*Response, error) {
+	if err := c.cfg.retryOptions.validate(); err != nil {
+		return nil, err
+	}
+
 	// make sure the client is configured before sending the request
 	if !c.isConfigured() {
 		return nil, NotConfiguredError{}
@@ -90,13 +81,15 @@ func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *R
 	req := c.http.R().SetContext(ctx).SetQueryParam(urlParamName, parsedURL.String()).SetBody(body)
 
 	// if parameters are provided, validate them and set them on the request
+	var query url.Values
 	if params != nil {
 		if err := params.Validate(); err != nil {
 			return nil, err
 		}
 
+		query = params.ToURLValues()
 		req.SetHeaderMultiValues(params.CustomHeaders)
-		req.SetQueryParamsFromValues(params.ToURLValues())
+		req.SetQueryParamsFromValues(query)
 	}
 
 	// if the concurrency semaphore is initialized, acquire a token before sending the request
@@ -107,7 +100,7 @@ func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *R
 	}
 
 	// execute the request, and return the response or an error if one occurred
-	res, err := req.Execute(method, "/")
+	res, err := c.execute(ctx, req, method, body, query)
 	if err != nil {
 		return nil, err
 	}
