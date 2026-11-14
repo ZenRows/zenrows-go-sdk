@@ -2,6 +2,13 @@
 
 Releases before service/api v1.2.1 are listed on [GitHub Releases](https://github.com/ZenRows/zenrows-go-sdk/releases).
 
+## [1.4.1](https://github.com/ZenRows/zenrows-go-sdk/compare/service/api/v1.4.0...service/api/v1.4.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **api:** keep the API key out of transport errors ([#54](https://github.com/ZenRows/zenrows-go-sdk/issues/54)) ([bcf4c6f](https://github.com/ZenRows/zenrows-go-sdk/commit/bcf4c6f66cf3cf89ffc6da345849c6386934b61b))
+
 ## [1.4.0](https://github.com/ZenRows/zenrows-go-sdk/compare/service/api/v1.3.0...service/api/v1.4.0) (2026-11-06)
 
 
