@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -243,5 +245,53 @@ func TestWithMaxConcurrentRequestsLimitsInFlightRequests(t *testing.T) {
 
 	if maxObserved.Load() > int32(maxConcurrent) {
 		t.Fatalf("expected at most %d concurrent requests, observed %d", maxConcurrent, maxObserved.Load())
+	}
+}
+
+func TestTransportErrorsHideAPIKey(t *testing.T) {
+	const apiKey = "secret+key/=" // needs escaping in a query string
+
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.String(), http.StatusFound)
+	}))
+	defer redirect.Close()
+
+	slow := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer slow.Close()
+
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+
+	expired, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		baseURL string
+		is      error
+	}{
+		{"refused connection", context.Background(), closed.URL, nil},
+		{"redirect loop", context.Background(), redirect.URL, nil},
+		{"caller deadline", expired, slow.URL, context.DeadlineExceeded},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := scraperapi.NewClient(scraperapi.WithBaseURL(tt.baseURL), scraperapi.WithAPIKey(apiKey))
+			_, err := client.Get(tt.ctx, "https://example.com", nil)
+
+			var urlErr *url.Error
+			if !errors.As(err, &urlErr) {
+				t.Fatalf("expected a *url.Error, got %v", err)
+			}
+			if tt.is != nil && !errors.Is(err, tt.is) {
+				t.Fatalf("expected %v, got %v", tt.is, err)
+			}
+			if strings.Contains(err.Error(), "secret") || !strings.Contains(urlErr.URL, "apikey=REDACTED") {
+				t.Fatalf("expected the API key to be redacted, got %v", err)
+			}
+		})
 	}
 }

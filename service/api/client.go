@@ -2,6 +2,7 @@ package scraperapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"slices"
@@ -14,6 +15,7 @@ import (
 const (
 	apiKeyParamName = "apikey"
 	urlParamName    = "url"
+	redactedAPIKey  = "REDACTED"
 )
 
 // Client is the ZenRows Fetch API client
@@ -102,9 +104,19 @@ func (c *Client) Scrape(ctx context.Context, method, targetURL string, params *R
 	// execute the request, and return the response or an error if one occurred
 	res, err := c.execute(ctx, req, method, body, query)
 	if err != nil {
-		return nil, err
+		return nil, c.redactAPIKey(err)
 	}
 	return &Response{res: res}, nil
+}
+
+// redactAPIKey hides the API key in the request URL that a transport error (a *url.Error) carries, so that logging
+// the error does not log the key. It changes the URL in place and returns the same error.
+func (c *Client) redactAPIKey(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		urlErr.URL = strings.ReplaceAll(urlErr.URL, url.QueryEscape(c.cfg.apiKey), redactedAPIKey)
+	}
+	return err
 }
 
 // Get sends an HTTP GET request to the ZenRows Fetch API to scrape the given target URL using the specified parameters.
