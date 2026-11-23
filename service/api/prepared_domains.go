@@ -53,7 +53,10 @@ type PreparedDomainFailure struct {
 // StatusCode and Code; display Detail, don't parse it. Code is the problem's code, for example
 // "invalid_argument" (400), "not_found" (404), "in_progress" (409: a preparation is already
 // running, read its status instead of resubmitting), "out_of_allowance" (429: no preparations
-// left this month), or "overloaded" / "disabled" (503); empty when the body has none.
+// left this month), "domain_rejection_limit" (429: this domain's preparations were rejected as
+// many times as this month allows; don't retry it this month, other domains still work), or
+// "overloaded" / "disabled" (503); empty when the body has none. A "domain_rejection_limit"
+// Body also carries the members domain, rejected, limit and month.
 type PreparedDomainError struct {
 	StatusCode int
 	Code       string
@@ -99,7 +102,7 @@ func (e *PreparedDomainError) Error() string {
 //
 // An empty or whitespace-only domain returns an InvalidParameterError before any request. A
 // non-2xx answer returns a *PreparedDomainError, for example 400 invalid_argument,
-// 409 in_progress, 429 out_of_allowance or 503 overloaded / disabled.
+// 409 in_progress, 429 out_of_allowance or domain_rejection_limit, or 503 overloaded / disabled.
 func (c *Client) PrepareDomain(ctx context.Context, domain string, exampleURLs []string) (*PreparedDomainStatus, error) {
 	if err := checkDomain(domain); err != nil {
 		return nil, err
