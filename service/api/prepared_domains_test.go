@@ -176,6 +176,47 @@ func TestPreparedDomainsErrorAnswers(t *testing.T) {
 	}
 }
 
+// A domain_rejection_limit 429 keeps its own code, the detail and its extra members (in Body),
+// and is not retried.
+func TestPrepareDomainRejectionLimit(t *testing.T) {
+	const domain = "shop.example.com"
+	const detail = domain + " had 3 rejected preparation attempts this month (failed verification); " +
+		"the limit is 3 per domain per month. This submission was not accepted and not counted against your " +
+		"allowance. New attempts for this domain reopen at the start of next month (UTC)."
+	body, _ := json.Marshal(map[string]any{
+		"type":  "https://docs.zenrows.com/api-error-codes#domain_rejection_limit",
+		"title": "Domain rejection limit reached", "status": http.StatusTooManyRequests,
+		"code": "domain_rejection_limit", "detail": detail,
+		"domain": domain, "rejected": 3, "limit": 3, "month": "2026-11",
+	})
+	client, seen := preparedDomainsStub(t, http.StatusTooManyRequests, string(body), nil)
+
+	_, err := client.PrepareDomain(context.Background(), domain, []string{"https://" + domain + "/"})
+
+	var perr *scraperapi.PreparedDomainError
+	if !errors.As(err, &perr) {
+		t.Fatalf("expected *PreparedDomainError, got %v", err)
+	}
+	if perr.StatusCode != http.StatusTooManyRequests || perr.Code != "domain_rejection_limit" || perr.Detail != detail {
+		t.Fatalf("unexpected error fields: %+v", perr)
+	}
+	var members struct {
+		Domain   string `json:"domain"`
+		Rejected int    `json:"rejected"`
+		Limit    int    `json:"limit"`
+		Month    string `json:"month"`
+	}
+	if err := json.Unmarshal(perr.Body, &members); err != nil {
+		t.Fatalf("decode Body: %v", err)
+	}
+	if members.Domain != domain || members.Rejected != 3 || members.Limit != 3 || members.Month != "2026-11" {
+		t.Fatalf("unexpected problem members: %+v", members)
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("expected no retry, got %d requests", len(*seen))
+	}
+}
+
 func TestPreparedDomainStatusNotFound(t *testing.T) {
 	client, _ := preparedDomainsStub(t, http.StatusNotFound,
 		`{"code":"not_found","detail":"never submitted","status":404,"title":"Not found"}`, nil)

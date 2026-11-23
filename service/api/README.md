@@ -195,7 +195,7 @@ for err == nil && status.Status == "preparing" {
 
 var perr *scraperapi.PreparedDomainError
 if errors.As(err, &perr) {
-    // e.g. 409 in_progress, 429 out_of_allowance, 503 overloaded
+    // e.g. 409 in_progress, 429 out_of_allowance or domain_rejection_limit, 503 overloaded
     fmt.Println(perr.StatusCode, perr.Code, perr.Detail)
 } else if err == nil {
     fmt.Println(status.Status) // "ready" or "failed" (see status.Failure)
@@ -204,7 +204,9 @@ if errors.As(err, &perr) {
 
 An empty or whitespace-only domain returns an `InvalidParameterError` before any request.
 
-Both methods return a `*scraperapi.PreparedDomainError` on an error answer, with `StatusCode`, `Code` (`invalid_argument`, `not_found`, `in_progress`, `out_of_allowance`, `overloaded`, `disabled`, ...), `Detail`, `Reason`, `RetryAfter` and the raw `Body`. See the [Extract endpoints docs](https://docs.zenrows.com/extract/endpoints?utm_source=github&utm_medium=readme&utm_campaign=zenrows-go-sdk) for every status and failure code.
+Both methods return a `*scraperapi.PreparedDomainError` on an error answer, with `StatusCode`, `Code` (`invalid_argument`, `not_found`, `in_progress`, `out_of_allowance`, `domain_rejection_limit`, `overloaded`, `disabled`, ...), `Detail`, `Reason`, `RetryAfter` and the raw `Body`.
+
+Two `429` codes mean different things. `out_of_allowance` means the account has no preparations left this month. `domain_rejection_limit` means this domain's preparations failed verification as many times as the monthly limit allows: don't submit this domain again this month, though other domains can still be prepared, and the refused submission cost nothing. Its `Body` also carries `domain`, `rejected`, `limit` and `month`. See the [Extract endpoints docs](https://docs.zenrows.com/extract/endpoints?utm_source=github&utm_medium=readme&utm_campaign=zenrows-go-sdk) for every status and failure code.
 
 A `422` with problem code `no_data_extracted` means Extract knows this kind of page but found no data on it. It isn't charged, and the client never retries it, even with `WithMaxRetryCount` set. `response.IsNoDataExtracted()` tells you when you got one. See the [Extract docs](https://docs.zenrows.com/extract/setup?utm_source=github&utm_medium=readme&utm_campaign=zenrows-go-sdk).
 
